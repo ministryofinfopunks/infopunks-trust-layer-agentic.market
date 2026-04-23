@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Infopunks Trust Score",
+  "name_for_model": "infopunks_trust_score",
+  "description_for_human": "Trust resolution and routing for agents with x402-paid MCP tools.",
+  "description_for_model": "Use this service to resolve trust, select validators/executors, and subscribe to trust events with payment receipts and spend controls.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "mcp",
+    "url": "https://mcp.infopunks.ai/mcp"
+  },
+  "logo_url": "https://agentic.market/assets/infopunks.png",
+  "contact_email": "builders@infopunks.ai",
+  "legal_info_url": "https://agentic.market/terms"
+}

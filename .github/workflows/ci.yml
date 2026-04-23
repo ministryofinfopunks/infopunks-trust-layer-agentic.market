@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify
+        run: npm run ci
+
+      - name: Smoke boot
+        run: |
+          INFOPUNKS_API_KEY=ci-infopunks-key node apps/api/server.mjs > /tmp/infopunks-api.log 2>&1 &
+          API_PID=$!
+          trap 'kill $API_PID' EXIT
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4010/healthz >/tmp/infopunks-health.json; then
+              cat /tmp/infopunks-health.json
+              exit 0
+            fi
+            sleep 0.25
+          done
+          cat /tmp/infopunks-api.log
+          exit 1

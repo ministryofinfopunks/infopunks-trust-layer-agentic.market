@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: Infopunks MCP/x402 Adapter API
+  version: 0.3.0
+  description: Public listing-facing API surface for paid trust scoring and agent reputation services.
+servers:
+  - url: https://mcp.infopunks.example
+paths:
+  /trust-score:
+    post:
+      summary: Resolve trust score with x402 payment gating
+      description: Returns HTTP 402 when payment/entitlement is missing or invalid.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustScoreRequest"
+      responses:
+        "200":
+          description: Trust score response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolEnvelope"
+        "400":
+          $ref: "#/components/responses/AdapterError"
+        "402":
+          description: Payment required
+          headers:
+            x402-required:
+              schema: { type: string, const: "true" }
+            x402-pricing-units:
+              schema: { type: string }
+            x402-payment-rail:
+              schema: { type: string, const: x402 }
+            x402-accepted-assets:
+              schema: { type: string }
+            x402-supported-networks:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterErrorEnvelope"
+  /agent-reputation/{id}:
+    get:
+      summary: Fetch agent reputation profile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reputation profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    additionalProperties: true
+                  meta:
+                    type: object
+                    additionalProperties: true
+                required: [result, meta]
+        "404":
+          $ref: "#/components/responses/AdapterError"
+  /verify-evidence:
+    post:
+      summary: Submit evidence for verification pipeline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceRequest"
+      responses:
+        "202":
+          description: Evidence accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    additionalProperties: true
+                  meta:
+                    type: object
+                    additionalProperties: true
+                required: [result, meta]
+        "400":
+          $ref: "#/components/responses/AdapterError"
+  /mcp:
+    post:
+      summary: MCP JSON-RPC endpoint
+      description: Tool surface for agentic MCP clients with x402 unit pricing.
+      responses:
+        "200":
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /health:
+    get:
+      summary: Adapter health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  version: { type: string }
+                required: [ok, service]
+components:
+  responses:
+    AdapterError:
+      description: Adapter error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdapterErrorEnvelope"
+  schemas:
+    TrustScoreRequest:
+      type: object
+      properties:
+        subject_id: { type: string }
+        context:
+          type: object
+          additionalProperties: true
+        policy_id: { type: string }
+        policy_version: { type: string }
+        include:
+          type: array
+          items: { type: string }
+        candidate_validators:
+          type: array
+          items: { type: string }
+        payment:
+          type: object
+          additionalProperties: true
+      required: [subject_id, context]
+      additionalProperties: false
+    EvidenceRequest:
+      type: object
+      properties:
+        subject_id: { type: string }
+        event_type: { type: string }
+        context:
+          type: object
+          additionalProperties: true
+        outcome:
+          type: object
+          additionalProperties: true
+      required: [subject_id, event_type, context, outcome]
+      additionalProperties: true
+    ToolEnvelope:
+      type: object
+      properties:
+        result:
+          type: object
+          additionalProperties: true
+        meta:
+          type: object
+          additionalProperties: true
+      required: [result, meta]
+    AdapterErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+            retryable: { type: boolean }
+            adapter_trace_id: { type: string }
+          required: [code, message, retryable, adapter_trace_id]
+      required: [error]

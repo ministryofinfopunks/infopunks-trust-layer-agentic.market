@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: infopunks-core-api
+    env: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: INFOPUNKS_ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "4010"
+      - key: INFOPUNKS_DB_PATH
+        value: /var/data/infopunks.production.db
+      - key: INFOPUNKS_API_KEY
+        sync: false
+
+  - type: web
+    name: infopunks-x402-adapter
+    env: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm run mcp:adapter
+    healthCheckPath: /health
+    envVars:
+      - key: INFOPUNKS_ENVIRONMENT
+        value: production
+      - key: MCP_ADAPTER_TRANSPORT
+        value: http
+      - key: MCP_ADAPTER_HOST
+        value: 0.0.0.0
+      - key: MCP_ADAPTER_PORT
+        value: "4021"
+      - key: X402_REQUIRED_DEFAULT
+        value: "true"
+      - key: X402_VERIFIER_MODE
+        value: facilitator
+      - key: X402_ACCEPTED_ASSETS
+        value: USDC
+      - key: X402_SUPPORTED_NETWORKS
+        value: base
+      - key: MCP_ADAPTER_PUBLIC_URL
+        sync: false
+      - key: INFOPUNKS_CORE_BASE_URL
+        sync: false
+      - key: INFOPUNKS_INTERNAL_SERVICE_TOKEN
+        sync: false
+      - key: X402_VERIFIER_URL
+        sync: false
+      - key: X402_VERIFIER_API_KEY
+        sync: false
+      - key: MCP_ADAPTER_ADMIN_TOKEN
+        sync: false
+      - key: X402_SETTLEMENT_WEBHOOK_HMAC_SECRET
+        sync: false
+      - key: MCP_ENTITLEMENT_ISSUER
+        sync: false
+      - key: MCP_ENTITLEMENT_AUDIENCE
+        sync: false
+      - key: MCP_ENTITLEMENT_ALLOWED_ALGORITHMS
+        value: RS256
+      - key: MCP_ENTITLEMENT_RS256_PUBLIC_KEY
+        sync: false
+      - key: MCP_ADAPTER_MULTI_INSTANCE_MODE
+        value: "true"
+      - key: MCP_ADAPTER_STATE_STORE_DRIVER
+        value: postgres
+      - key: MCP_ADAPTER_STATE_STORE_DATABASE_URL
+        fromDatabase:
+          name: infopunks-mcp-db
+          property: connectionString
+      - key: INFOPUNKS_MCP_IDENTITY_MAP_DRIVER
+        value: postgres
+      - key: INFOPUNKS_MCP_IDENTITY_MAP_DATABASE_URL
+        fromDatabase:
+          name: infopunks-mcp-db
+          property: connectionString
+      - key: MCP_ADAPTER_RATE_LIMIT_DRIVER
+        value: postgres
+      - key: MCP_ADAPTER_RATE_LIMIT_POSTGRES_URL
+        fromDatabase:
+          name: infopunks-mcp-db
+          property: connectionString
+
+databases:
+  - name: infopunks-mcp-db
+    plan: starter

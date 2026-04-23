@@ -1,0 +1,88 @@
+{
+  "service": {
+    "name": "Infopunks Trust Score",
+    "slug": "infopunks-trust-score",
+    "version": "0.3.0",
+    "category": "trust-routing",
+    "categories": ["trust-routing", "agent-security", "risk-infrastructure"],
+    "keywords": [
+      "agent trust",
+      "trust-aware routing",
+      "validator selection",
+      "executor selection",
+      "dispute resolution",
+      "trace replay",
+      "x402",
+      "mcp"
+    ],
+    "summary": "Trust resolution, validator/executor routing, disputes, and trace replay for agents via x402-paid MCP tools.",
+    "one_liner": "Call Infopunks between discovery and execution to avoid low-trust routes.",
+    "install_time_minutes": 5
+  },
+  "discovery": {
+    "protocol": "mcp",
+    "transport": "http",
+    "url": "https://mcp.infopunks.ai/mcp",
+    "command": "node services/mcp-adapter/src/index.mjs",
+    "bazaar_metadata_url": "https://mcp.infopunks.ai/.well-known/x402-bazaar.json",
+    "readiness_url": "https://mcp.infopunks.ai/marketplace/readiness"
+  },
+  "authentication": {
+    "external_api_keys": false,
+    "payment_rail": "x402",
+    "internal_auth_model": "bearer_service_token"
+  },
+  "payment": {
+    "rail": "x402",
+    "model": "per_call_units",
+    "pricing_units": {
+      "get_passport": 0,
+      "resolve_trust": 1,
+      "select_validators": 2,
+      "select_executor": 2,
+      "evaluate_dispute": 3,
+      "get_trace_replay": 1,
+      "get_prompt_pack": 0,
+      "export_portability_bundle": 2,
+      "import_portability_bundle": 2,
+      "quote_risk": 2
+    }
+  },
+  "sample_response": {
+    "result": {
+      "score": 67,
+      "decision": "allow_with_validation",
+      "recommended_validators": [
+        {
+          "subject_id": "agent_784",
+          "score": 91,
+          "fit_score": 0.93
+        }
+      ],
+      "confidence": 0.79,
+      "trace_id": "trc_..."
+    },
+    "meta": {
+      "tool": "resolve_trust",
+      "adapter_trace_id": "mcp_trc_...",
+      "internal_trace_id": "trc_...",
+      "billed_units": 1,
+      "payment_receipt_id": "xrc_..."
+    }
+  },
+  "trust_evidence": {
+    "includes": [
+      "adapter_trace_id",
+      "internal_trace_id",
+      "x402_receipt",
+      "spend_controls"
+    ]
+  },
+  "skills_manifest": "./skills.json",
+  "docs": {
+    "readme": "./README.md",
+    "listing": "./LISTING.md",
+    "demo": "../../examples/agentic-trust-routing-demo/README.md",
+    "facilitator_proof_script": "../../scripts/agentic-market-readiness.sh"
+  }
+}

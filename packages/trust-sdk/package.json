@@ -1,0 +1,32 @@
+{
+  "name": "@infopunks/trust-sdk",
+  "version": "1.0.0",
+  "description": "Installable trust layer SDK, API client, and event rail for agent systems.",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.10.0"
+  },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "generated-contracts.d.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "agents",
+    "trust",
+    "sdk",
+    "api",
+    "event-stream"
+  ],
+  "main": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.mjs"
+    },
+    "./package.json": "./package.json"
+  }
+}

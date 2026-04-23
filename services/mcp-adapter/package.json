@@ -1,0 +1,22 @@
+{
+  "name": "@infopunks/mcp-adapter",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP adapter for Infopunks Trust Score with x402-compatible payment gating.",
+  "main": "src/index.mjs",
+  "bin": {
+    "infopunks-mcp-adapter": "src/index.mjs"
+  },
+  "scripts": {
+    "dev": "node src/index.mjs",
+    "start": "node src/index.mjs",
+    "build": "echo 'No build step required for ESM adapter' && exit 0"
+  },
+  "engines": {
+    "node": ">=22.10.0"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}
