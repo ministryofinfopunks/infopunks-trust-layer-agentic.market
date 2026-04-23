@@ -343,7 +343,13 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    if (method === "GET" && (url.pathname === "/healthz" || url.pathname === "/health")) {
+    // Lightweight Render health check: no DB/upstream dependency.
+    if (method === "GET" && url.pathname === "/health") {
+      sendJson(res, 200, { status: "ok" }, corsHeaders());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/healthz") {
       const healthy = await mcpServer.apiClient.health();
       const listing = await marketplaceReadiness();
       sendJson(
