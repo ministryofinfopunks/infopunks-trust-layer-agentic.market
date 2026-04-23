@@ -46,6 +46,16 @@ function normalizeX402Network(value) {
 }
 
 function validateConfig(config) {
+  let backendUrl;
+  try {
+    backendUrl = new URL(String(config.backendBaseUrl ?? ""));
+  } catch {
+    throw new Error("INFOPUNKS_CORE_BASE_URL must be a valid absolute URL (including http:// or https://).");
+  }
+  if (!["http:", "https:"].includes(backendUrl.protocol)) {
+    throw new Error("INFOPUNKS_CORE_BASE_URL must use http:// or https://.");
+  }
+
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
     throw new Error(`MCP_ADAPTER_TRANSPORT must be one of: ${Array.from(ALLOWED_TRANSPORTS).join(", ")}.`);
   }

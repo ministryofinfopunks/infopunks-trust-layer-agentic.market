@@ -10,8 +10,12 @@ function queryString(query = {}) {
   return serialized ? `?${serialized}` : "";
 }
 
-async function parseBody(response) {
-  const text = await response.text();
+function truncate(value, max = 500) {
+  const text = String(value ?? "");
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function parseTextBody(text) {
   if (!text) {
     return null;
   }
@@ -35,39 +39,92 @@ export class UpstreamError extends Error {
 }
 
 export class InfopunksApiClient {
-  constructor({ baseUrl, token }) {
+  constructor({ baseUrl, token, logger = null }) {
     this.baseUrl = baseUrl;
     this.token = token;
+    this.logger = logger;
   }
 
   async request(method, route, { body, query, headers, adapterTraceId } = {}) {
-    const response = await fetch(`${this.baseUrl}${route}${queryString(query)}`, {
-      method,
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${this.token}`,
-        ...(adapterTraceId ? { "X-Adapter-Trace-Id": adapterTraceId } : {}),
-        ...(body ? { "content-type": "application/json" } : {}),
-        ...(headers ?? {})
-      },
-      body: body ? JSON.stringify(body) : undefined
-    });
+    const url = `${this.baseUrl}${route}${queryString(query)}`;
+    const requestBody = body ? JSON.stringify(body) : undefined;
+    const requestHeaders = {
+      accept: "application/json",
+      authorization: `Bearer ${this.token}`,
+      ...(adapterTraceId ? { "X-Adapter-Trace-Id": adapterTraceId } : {}),
+      ...(body ? { "content-type": "application/json" } : {}),
+      ...(headers ?? {})
+    };
 
-    const payload = await parseBody(response);
-    if (!response.ok) {
-      throw new UpstreamError(`${method} ${route} failed`, {
-        status: response.status,
-        body: payload,
+    try {
+      const response = await fetch(url, {
         method,
-        route
+        headers: requestHeaders,
+        body: requestBody
       });
-    }
+      const responseText = await response.text();
+      const payload = parseTextBody(responseText);
 
-    return payload;
+      this.logger?.info?.({
+        event: "upstream_request_completed",
+        adapter_trace_id: adapterTraceId ?? null,
+        method,
+        url,
+        status_code: response.status,
+        response_preview: truncate(responseText),
+        request_body_preview: truncate(requestBody ?? "")
+      });
+
+      if (!response.ok) {
+        throw new UpstreamError(`${method} ${route} failed`, {
+          status: response.status,
+          body: payload,
+          method,
+          route
+        });
+      }
+
+      return payload;
+    } catch (error) {
+      const cause = error?.cause;
+      this.logger?.error?.({
+        event: "upstream_request_failed",
+        adapter_trace_id: adapterTraceId ?? null,
+        method,
+        url,
+        request_body_preview: truncate(requestBody ?? ""),
+        error_message: error?.message ?? "fetch failed",
+        error_cause: cause?.message ?? String(cause ?? "")
+      });
+      throw error;
+    }
   }
 
   health() {
-    return fetch(`${this.baseUrl}/healthz`).then((res) => res.ok).catch(() => false);
+    const url = `${this.baseUrl}/healthz`;
+    return fetch(url)
+      .then(async (res) => {
+        const text = await res.text().catch(() => "");
+        this.logger?.info?.({
+          event: "upstream_health_probe",
+          method: "GET",
+          url,
+          status_code: res.status,
+          response_preview: truncate(text)
+        });
+        return res.ok;
+      })
+      .catch((error) => {
+        const cause = error?.cause;
+        this.logger?.warn?.({
+          event: "upstream_health_probe_failed",
+          method: "GET",
+          url,
+          error_message: error?.message ?? "fetch failed",
+          error_cause: cause?.message ?? String(cause ?? "")
+        });
+        return false;
+      });
   }
 
   getPassport(subjectId, adapterTraceId) { return this.request("GET", `/v1/passports/${encodeURIComponent(subjectId)}`, { adapterTraceId }); }

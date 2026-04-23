@@ -33,7 +33,8 @@ const logger = new Logger(config.logLevel);
 const metrics = new Metrics();
 const apiClient = new InfopunksApiClient({
   baseUrl: config.backendBaseUrl,
-  token: config.internalServiceToken
+  token: config.internalServiceToken,
+  logger
 });
 const identityMappingStore = await createIdentityMappingStore(config);
 const mapper = new PassportMapper({ mapPath: config.identityMapPath, environment: config.environment, store: identityMappingStore });
