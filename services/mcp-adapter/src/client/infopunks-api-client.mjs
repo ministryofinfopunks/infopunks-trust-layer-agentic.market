@@ -15,6 +15,13 @@ function truncate(value, max = 500) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+function bodyKeys(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return [];
+  }
+  return Object.keys(body);
+}
+
 function parseTextBody(text) {
   if (!text) {
     return null;
@@ -56,6 +63,14 @@ export class InfopunksApiClient {
       ...(headers ?? {})
     };
 
+    this.logger?.info?.({
+      event: "upstream_request_start",
+      adapter_trace_id: adapterTraceId ?? null,
+      method,
+      url,
+      request_body_keys: bodyKeys(body)
+    });
+
     try {
       const response = await fetch(url, {
         method,
@@ -76,6 +91,14 @@ export class InfopunksApiClient {
       });
 
       if (!response.ok) {
+        this.logger?.warn?.({
+          event: "upstream_request_non_2xx",
+          adapter_trace_id: adapterTraceId ?? null,
+          method,
+          url,
+          status_code: response.status,
+          response_preview: truncate(responseText)
+        });
         throw new UpstreamError(`${method} ${route} failed`, {
           status: response.status,
           body: payload,
