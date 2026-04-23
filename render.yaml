@@ -87,4 +87,4 @@ services:
 
 databases:
   - name: infopunks-mcp-db
-    plan: starter
+    plan: basic-256mb
