@@ -34,6 +34,17 @@ function isZeroAddress(value) {
   return String(value ?? "").toLowerCase() === "0x0000000000000000000000000000000000000000";
 }
 
+function normalizeX402Network(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return normalized;
+  }
+  if (normalized === "base" || normalized === "base-sepolia") {
+    return "eip155:84532";
+  }
+  return normalized;
+}
+
 function validateConfig(config) {
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
     throw new Error(`MCP_ADAPTER_TRANSPORT must be one of: ${Array.from(ALLOWED_TRANSPORTS).join(", ")}.`);
@@ -80,11 +91,23 @@ function validateConfig(config) {
     if (!isHexAddress(config.x402PaymentAssetAddress)) {
       throw new Error("X402_PAYMENT_ASSET_ADDRESS must be a 0x-prefixed 20-byte address when x402 is required.");
     }
-    if (!isHexAddress(config.x402PayTo)) {
-      throw new Error("X402_PAY_TO must be a 0x-prefixed 20-byte address when x402 is required.");
+    const payTo = String(config.x402PayTo ?? "").trim();
+    const isPlaceholder = payTo.toLowerCase() === "0x1111111111111111111111111111111111111111";
+    if (isProductionLike(config.environment)) {
+      if (!payTo) {
+        throw new Error("X402_PAY_TO is required in non-local environments when x402 is required.");
+      }
+      if (isPlaceholder) {
+        throw new Error("X402_PAY_TO cannot use the placeholder address in non-local environments.");
+      }
     }
-    if (isZeroAddress(config.x402PayTo)) {
-      throw new Error("X402_PAY_TO must be a non-zero receiver address when x402 is required.");
+    if (payTo) {
+      if (!isHexAddress(payTo)) {
+        throw new Error("X402_PAY_TO must be a 0x-prefixed 20-byte address when provided.");
+      }
+      if (isZeroAddress(payTo)) {
+        throw new Error("X402_PAY_TO must be a non-zero receiver address when provided.");
+      }
     }
   }
   if (!/^\d+$/.test(config.x402PricePerUnitAtomic) || BigInt(config.x402PricePerUnitAtomic) <= 0n) {
@@ -206,11 +229,11 @@ export function loadEnv() {
       .filter(Boolean),
     x402SupportedNetworks: (process.env.X402_SUPPORTED_NETWORKS ?? "eip155:84532")
       .split(",")
-      .map((entry) => entry.trim().toLowerCase())
+      .map((entry) => normalizeX402Network(entry))
       .filter(Boolean),
     x402PaymentScheme: process.env.X402_PAYMENT_SCHEME ?? "exact",
     x402PaymentAssetAddress: process.env.X402_PAYMENT_ASSET_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-    x402PayTo: process.env.X402_PAY_TO ?? "0x1111111111111111111111111111111111111111",
+    x402PayTo: process.env.X402_PAY_TO ?? "",
     x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? "10000",
     x402PaymentTimeoutSeconds: Number(process.env.X402_PAYMENT_TIMEOUT_SECONDS ?? 300),
     x402Eip712Name: process.env.X402_EIP712_NAME ?? "USD Coin",

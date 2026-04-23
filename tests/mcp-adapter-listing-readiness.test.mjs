@@ -61,6 +61,26 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.match(headers["x402-discovery"], /\/\.well-known\/x402-bazaar\.json$/);
 });
 
+test("challengeHeaders normalize legacy base network alias to Base Sepolia CAIP-2", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["base"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300
+    },
+    { pricing: { units: 1 } }
+  );
+
+  assert.equal(headers["x402-supported-networks"], "eip155:84532");
+});
+
 test("trust-score helper mapping emits commercial response format", () => {
   const request = __testOnly.normalizeTrustScoreRequest({
     entity_id: "agent_221",

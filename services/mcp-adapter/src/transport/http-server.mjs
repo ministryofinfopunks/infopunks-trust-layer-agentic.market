@@ -143,7 +143,7 @@ function normalizeNetworkToCaip2(network) {
     return "eip155:84532";
   }
   if (normalized === "base") {
-    return "eip155:8453";
+    return "eip155:84532";
   }
   return normalized;
 }

@@ -236,6 +236,79 @@ test("entitlement service creates provisional receipt and spend state", async (t
   assert.equal(result.spend_controls.units_spent_today, 1);
 });
 
+test("entitlement service accepts Base Sepolia USDC contract address when config uses symbol", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:84532"]
+    },
+    logger: null
+  });
+
+  const result = await entitlementService.authorizeAndBill({
+    operation: "resolve_trust",
+    payment: {
+      rail: "x402",
+      payer: "payer-asset-address",
+      units_authorized: 5,
+      nonce: "n-asset-address",
+      network: "eip155:84532",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    },
+    fallbackPayer: "payer-asset-address",
+    spendLimitUnits: 100,
+    adapterTraceId: "mcp_trc_asset_addr",
+    entitlement: null
+  });
+
+  assert.equal(result.billed_units, 1);
+});
+
+test("entitlement service rejects unsupported asset address", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:84532"]
+    },
+    logger: null
+  });
+
+  await assert.rejects(
+    entitlementService.authorizeAndBill({
+      operation: "resolve_trust",
+      payment: {
+        rail: "x402",
+        payer: "payer-bad-asset",
+        units_authorized: 5,
+        nonce: "n-bad-asset",
+        network: "eip155:84532",
+        asset: "0x0000000000000000000000000000000000000001"
+      },
+      fallbackPayer: "payer-bad-asset",
+      spendLimitUnits: 100,
+      adapterTraceId: "mcp_trc_bad_asset",
+      entitlement: null
+    }),
+    (error) => error?.code === "PAYMENT_VERIFICATION_FAILED" && /Unsupported payment asset/i.test(error?.message ?? "")
+  );
+});
+
 test("reservePaidOperation enforces spend limit atomically", (t) => {
   const store = makeStore(t);
   const first = store.reservePaidOperation({

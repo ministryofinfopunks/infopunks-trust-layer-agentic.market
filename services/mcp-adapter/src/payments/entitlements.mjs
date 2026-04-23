@@ -1,6 +1,75 @@
 import { TOOL_PRICING } from "../config/pricing.mjs";
 import { makeAdapterError } from "../schemas/error-schema.mjs";
 
+function isHexAddress(value) {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function normalizeNetwork(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "base" || normalized === "base-sepolia") {
+    return "eip155:84532";
+  }
+  return normalized;
+}
+
+function assetAddressForSymbol(symbol, network) {
+  const key = String(symbol ?? "").toUpperCase();
+  if (key !== "USDC") {
+    return null;
+  }
+  if (network === "eip155:84532") {
+    return "0x036CbD53842c5426634e7929541eC2318f3dCF7e".toLowerCase();
+  }
+  if (network === "eip155:8453") {
+    return "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913".toLowerCase();
+  }
+  return null;
+}
+
+function normalizeConfiguredAssets(acceptedAssets, network) {
+  const normalizedSymbols = new Set();
+  const normalizedAddresses = new Set();
+
+  for (const configured of acceptedAssets ?? []) {
+    const value = String(configured ?? "").trim();
+    if (!value) {
+      continue;
+    }
+    if (isHexAddress(value)) {
+      normalizedAddresses.add(value.toLowerCase());
+      continue;
+    }
+    const symbol = value.toUpperCase();
+    normalizedSymbols.add(symbol);
+    const mapped = assetAddressForSymbol(symbol, network);
+    if (mapped) {
+      normalizedAddresses.add(mapped);
+    }
+  }
+
+  return { normalizedSymbols, normalizedAddresses };
+}
+
+function isAcceptedAsset({ paymentAssetRaw, network, acceptedAssets }) {
+  if (!paymentAssetRaw) {
+    return false;
+  }
+  const { normalizedSymbols, normalizedAddresses } = normalizeConfiguredAssets(acceptedAssets, network);
+  if (isHexAddress(paymentAssetRaw)) {
+    return normalizedAddresses.has(paymentAssetRaw.toLowerCase());
+  }
+  const symbol = paymentAssetRaw.toUpperCase();
+  if (normalizedSymbols.has(symbol)) {
+    return true;
+  }
+  const mapped = assetAddressForSymbol(symbol, network);
+  return mapped ? normalizedAddresses.has(mapped) : false;
+}
+
 export class EntitlementService {
   constructor({ verifier, store, config, logger, metrics = null }) {
     this.verifier = verifier;
@@ -25,12 +94,19 @@ export class EntitlementService {
       };
     }
 
-    const paymentAsset = typeof payment?.asset === "string" ? payment.asset.toUpperCase() : null;
-    const paymentNetwork = typeof payment?.network === "string" ? payment.network.toLowerCase() : null;
+    const paymentAssetRaw = typeof payment?.asset === "string"
+      ? payment.asset
+      : (typeof payment?.paymentRequirements?.asset === "string" ? payment.paymentRequirements.asset : null);
+    const paymentNetwork = normalizeNetwork(
+      typeof payment?.network === "string"
+        ? payment.network
+        : (typeof payment?.paymentRequirements?.network === "string" ? payment.paymentRequirements.network : null)
+    );
     const acceptedAssets = this.config.x402AcceptedAssets ?? ["USDC"];
-    const supportedNetworks = this.config.x402SupportedNetworks ?? ["eip155:84532"];
+    const supportedNetworks = (this.config.x402SupportedNetworks ?? ["eip155:84532"]).map(normalizeNetwork).filter(Boolean);
+    const effectiveNetwork = paymentNetwork ?? supportedNetworks[0] ?? "eip155:84532";
 
-    if (this.config.x402RequirePaymentAsset && !paymentAsset) {
+    if (this.config.x402RequirePaymentAsset && !paymentAssetRaw) {
       throw makeAdapterError(
         "PAYMENT_VERIFICATION_FAILED",
         "Payment asset is required.",
@@ -39,11 +115,15 @@ export class EntitlementService {
         402
       );
     }
-    if (paymentAsset && !acceptedAssets.includes(paymentAsset)) {
+    if (paymentAssetRaw && !isAcceptedAsset({ paymentAssetRaw, network: effectiveNetwork, acceptedAssets })) {
       throw makeAdapterError(
         "PAYMENT_VERIFICATION_FAILED",
         "Unsupported payment asset.",
-        { received_asset: paymentAsset, accepted_assets: acceptedAssets },
+        {
+          received_asset: paymentAssetRaw,
+          accepted_assets: acceptedAssets,
+          expected_network: effectiveNetwork
+        },
         false,
         402
       );
