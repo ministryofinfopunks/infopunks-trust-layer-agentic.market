@@ -40,7 +40,14 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
       host: "127.0.0.1",
       port: 4021,
       x402AcceptedAssets: ["USDC"],
-      x402SupportedNetworks: ["base"]
+      x402SupportedNetworks: ["eip155:84532"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2"
     },
     { pricing: { units: 2 } }
   );
@@ -49,7 +56,8 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(headers["x402-pricing-units"], "2");
   assert.equal(headers["x402-payment-rail"], "x402");
   assert.equal(headers["x402-accepted-assets"], "USDC");
-  assert.equal(headers["x402-supported-networks"], "base");
+  assert.equal(headers["x402-supported-networks"], "eip155:84532");
+  assert.equal(typeof headers["PAYMENT-REQUIRED"], "string");
   assert.match(headers["x402-discovery"], /\/\.well-known\/x402-bazaar\.json$/);
 });
 
@@ -90,5 +98,6 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
   );
 
   assert.deepEqual(config.x402AcceptedAssets, ["USDC"]);
-  assert.deepEqual(config.x402SupportedNetworks, ["base"]);
+  assert.deepEqual(config.x402SupportedNetworks, ["eip155:84532"]);
+  assert.equal(config.x402VerifierUrl, "https://x402.org/facilitator");
 });

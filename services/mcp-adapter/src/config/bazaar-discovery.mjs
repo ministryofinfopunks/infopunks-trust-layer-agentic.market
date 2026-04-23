@@ -62,7 +62,7 @@ export function buildBazaarDiscoveryDocument(config) {
         payment: "x402",
         internal_service_auth: "bearer_token",
         accepted_assets: config.x402AcceptedAssets ?? ["USDC"],
-        supported_networks: config.x402SupportedNetworks ?? ["base"]
+        supported_networks: config.x402SupportedNetworks ?? ["eip155:84532"]
       }
     },
     discovery: {

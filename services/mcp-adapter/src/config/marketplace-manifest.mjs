@@ -44,7 +44,7 @@ export function buildMarketplaceManifest(config) {
     payment: {
       rail: "x402",
       accepted_assets: config.x402AcceptedAssets ?? ["USDC"],
-      supported_networks: config.x402SupportedNetworks ?? ["base"],
+      supported_networks: config.x402SupportedNetworks ?? ["eip155:84532"],
       model: "per_call_units",
       pricing_units: Object.fromEntries(Object.entries(TOOL_PRICING).map(([tool, entry]) => [tool, entry?.units ?? 0]))
     },

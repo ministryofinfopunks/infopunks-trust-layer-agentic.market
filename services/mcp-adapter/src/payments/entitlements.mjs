@@ -28,7 +28,7 @@ export class EntitlementService {
     const paymentAsset = typeof payment?.asset === "string" ? payment.asset.toUpperCase() : null;
     const paymentNetwork = typeof payment?.network === "string" ? payment.network.toLowerCase() : null;
     const acceptedAssets = this.config.x402AcceptedAssets ?? ["USDC"];
-    const supportedNetworks = this.config.x402SupportedNetworks ?? ["base"];
+    const supportedNetworks = this.config.x402SupportedNetworks ?? ["eip155:84532"];
 
     if (this.config.x402RequirePaymentAsset && !paymentAsset) {
       throw makeAdapterError(

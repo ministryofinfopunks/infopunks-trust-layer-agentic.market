@@ -26,6 +26,14 @@ function requireNonNegativeNumber(name, value) {
   }
 }
 
+function isHexAddress(value) {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function isZeroAddress(value) {
+  return String(value ?? "").toLowerCase() === "0x0000000000000000000000000000000000000000";
+}
+
 function validateConfig(config) {
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
     throw new Error(`MCP_ADAPTER_TRANSPORT must be one of: ${Array.from(ALLOWED_TRANSPORTS).join(", ")}.`);
@@ -47,6 +55,7 @@ function validateConfig(config) {
   requirePositiveNumber("X402_VERIFIER_TIMEOUT_MS", config.x402VerifierTimeoutMs);
   requirePositiveNumber("X402_REPLAY_WINDOW_SECONDS", config.x402ReplayWindowSeconds);
   requirePositiveNumber("INFOPUNKS_X402_DAILY_LIMIT_UNITS", config.x402DailySpendLimitUnits);
+  requirePositiveNumber("X402_PAYMENT_TIMEOUT_SECONDS", config.x402PaymentTimeoutSeconds);
   requirePositiveNumber("INFOPUNKS_MCP_RATE_LIMIT_PER_MINUTE", config.adapterRateLimitPerMinute);
   requirePositiveNumber("MCP_ADAPTER_MAX_BATCH_REQUESTS", config.maxBatchRequests);
   requirePositiveNumber("MCP_ENTITLEMENT_MAX_TTL_SECONDS", config.entitlementMaxTtlSeconds);
@@ -66,6 +75,20 @@ function validateConfig(config) {
 
   if (config.x402RequiredDefault && config.x402VerifierMode === "facilitator" && !isNonEmptyString(config.x402VerifierUrl)) {
     throw new Error("X402_VERIFIER_URL is required when X402_REQUIRED_DEFAULT=true and X402_VERIFIER_MODE=facilitator.");
+  }
+  if (config.x402RequiredDefault) {
+    if (!isHexAddress(config.x402PaymentAssetAddress)) {
+      throw new Error("X402_PAYMENT_ASSET_ADDRESS must be a 0x-prefixed 20-byte address when x402 is required.");
+    }
+    if (!isHexAddress(config.x402PayTo)) {
+      throw new Error("X402_PAY_TO must be a 0x-prefixed 20-byte address when x402 is required.");
+    }
+    if (isZeroAddress(config.x402PayTo)) {
+      throw new Error("X402_PAY_TO must be a non-zero receiver address when x402 is required.");
+    }
+  }
+  if (!/^\d+$/.test(config.x402PricePerUnitAtomic) || BigInt(config.x402PricePerUnitAtomic) <= 0n) {
+    throw new Error("X402_PRICE_PER_UNIT_ATOMIC must be a positive integer string.");
   }
 
   if (!Array.isArray(config.x402AcceptedAssets) || config.x402AcceptedAssets.length === 0) {
@@ -172,7 +195,7 @@ export function loadEnv() {
     x402VerifierMode: process.env.X402_VERIFIER_MODE ?? "facilitator",
     x402AllowStubMode: String(process.env.X402_ALLOW_STUB_MODE ?? "false") === "true",
     x402RequiredDefault: String(process.env.X402_REQUIRED_DEFAULT ?? "true") === "true",
-    x402VerifierUrl: process.env.X402_VERIFIER_URL ?? null,
+    x402VerifierUrl: process.env.X402_VERIFIER_URL ?? "https://x402.org/facilitator",
     x402VerifierApiKey: process.env.X402_VERIFIER_API_KEY ?? null,
     x402VerifierTimeoutMs: Number(process.env.X402_VERIFIER_TIMEOUT_MS ?? 5000),
     x402ReplayWindowSeconds: Number(process.env.X402_REPLAY_WINDOW_SECONDS ?? 900),
@@ -181,10 +204,17 @@ export function loadEnv() {
       .split(",")
       .map((entry) => entry.trim().toUpperCase())
       .filter(Boolean),
-    x402SupportedNetworks: (process.env.X402_SUPPORTED_NETWORKS ?? "base")
+    x402SupportedNetworks: (process.env.X402_SUPPORTED_NETWORKS ?? "eip155:84532")
       .split(",")
       .map((entry) => entry.trim().toLowerCase())
       .filter(Boolean),
+    x402PaymentScheme: process.env.X402_PAYMENT_SCHEME ?? "exact",
+    x402PaymentAssetAddress: process.env.X402_PAYMENT_ASSET_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    x402PayTo: process.env.X402_PAY_TO ?? "0x1111111111111111111111111111111111111111",
+    x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? "10000",
+    x402PaymentTimeoutSeconds: Number(process.env.X402_PAYMENT_TIMEOUT_SECONDS ?? 300),
+    x402Eip712Name: process.env.X402_EIP712_NAME ?? "USD Coin",
+    x402Eip712Version: process.env.X402_EIP712_VERSION ?? "2",
     x402RequirePaymentAsset: String(process.env.X402_REQUIRE_PAYMENT_ASSET ?? "false") === "true",
     x402RequirePaymentNetwork: String(process.env.X402_REQUIRE_PAYMENT_NETWORK ?? "false") === "true",
     environment: process.env.INFOPUNKS_ENVIRONMENT ?? "local",

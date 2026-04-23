@@ -47,8 +47,13 @@ This checklist is the final operator handoff for deploying Infopunks Trust Layer
 
 - `X402_REQUIRED_DEFAULT=true`
 - `X402_VERIFIER_MODE=facilitator` (production) or `strict` (guarded/local)
-- `X402_VERIFIER_URL` (required when `facilitator`)
+- `X402_VERIFIER_URL=https://x402.org/facilitator`
 - `X402_VERIFIER_API_KEY` (if facilitator requires auth)
+- `X402_SUPPORTED_NETWORKS=eip155:84532`
+- `X402_PAYMENT_SCHEME=exact`
+- `X402_PAYMENT_ASSET_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- `X402_PAY_TO=<your_base_sepolia_receiver_address>`
+- `X402_PRICE_PER_UNIT_ATOMIC=10000`
 
 ### MCP Adapter entitlement/session (production recommended)
 

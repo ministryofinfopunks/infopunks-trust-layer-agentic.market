@@ -15,6 +15,16 @@ function hasReplayIdentity({ nonce, proofId, verifierReference, sessionId, payer
   return Boolean(verifierReference || proofId || nonce || (sessionId && payer));
 }
 
+function extractPayerFromPaymentPayload(paymentPayload) {
+  const from = paymentPayload?.payload?.authorization?.from;
+  return typeof from === "string" && from.trim() ? from : null;
+}
+
+function extractNonceFromPaymentPayload(paymentPayload) {
+  const nonce = paymentPayload?.payload?.authorization?.nonce;
+  return typeof nonce === "string" && nonce.trim() ? nonce : null;
+}
+
 function localStrictVerify({ payment, requiredUnits, sharedSecret, fallbackPayer }) {
   const rail = payment?.rail ?? "x402";
   const payer = payment?.payer ?? fallbackPayer ?? "anonymous";
@@ -91,12 +101,17 @@ export class X402Verifier {
 
   async verify({ payment, requiredUnits, operation, fallbackPayer, adapterTraceId, entitlement }) {
     const started = Date.now();
+    const x402PaymentPayload = payment?.paymentPayload ?? null;
+    const x402PaymentRequirements = payment?.paymentRequirements ?? null;
+    const x402NativeFlow = Boolean(x402PaymentPayload && x402PaymentRequirements);
+    const payloadPayer = extractPayerFromPaymentPayload(x402PaymentPayload);
+    const payloadNonce = extractNonceFromPaymentPayload(x402PaymentPayload);
 
     if (this.mode === "stub") {
       const result = {
         ok: true,
-        payer: payment?.payer ?? fallbackPayer ?? entitlement?.payer ?? "anonymous",
-        nonce: payment?.nonce ?? `stub_nonce_${adapterTraceId}`,
+        payer: payment?.payer ?? payloadPayer ?? fallbackPayer ?? entitlement?.payer ?? "anonymous",
+        nonce: payment?.nonce ?? payloadNonce ?? `stub_nonce_${adapterTraceId}`,
         proof_id: payment?.proof_id ?? payment?.reference ?? `stub_proof_${adapterTraceId}`,
         session_id: payment?.session_id ?? entitlement?.session_id ?? null,
         verifier_reference: `stub_ref_${adapterTraceId}`,
@@ -136,14 +151,19 @@ export class X402Verifier {
     }
 
     try {
-      const payload = {
-        payment,
-        required_units: requiredUnits,
-        operation,
-        adapter_trace_id: adapterTraceId,
-        fallback_payer: fallbackPayer,
-        entitlement
-      };
+      const payload = x402NativeFlow
+        ? {
+          paymentPayload: x402PaymentPayload,
+          paymentRequirements: x402PaymentRequirements
+        }
+        : {
+          payment,
+          required_units: requiredUnits,
+          operation,
+          adapter_trace_id: adapterTraceId,
+          fallback_payer: fallbackPayer,
+          entitlement
+        };
       const response = await withTimeout(
         (signal) =>
           fetch(`${this.verifierUrl.replace(/\/$/, "")}/verify`, {
@@ -181,18 +201,18 @@ export class X402Verifier {
       }
 
       const result = {
-        ok: Boolean(responseBody?.ok),
-        reason: responseBody?.reason,
+        ok: typeof responseBody?.ok === "boolean" ? responseBody.ok : Boolean(responseBody?.isValid),
+        reason: responseBody?.reason ?? responseBody?.invalidReason,
         details: responseBody?.details ?? {},
-        payer: responseBody?.payer ?? payment?.payer ?? fallbackPayer ?? null,
-        nonce: responseBody?.nonce ?? payment?.nonce ?? null,
+        payer: responseBody?.payer ?? payment?.payer ?? payloadPayer ?? fallbackPayer ?? null,
+        nonce: responseBody?.nonce ?? payment?.nonce ?? payloadNonce ?? null,
         proof_id: responseBody?.proof_id ?? payment?.proof_id ?? payment?.reference ?? null,
         session_id: responseBody?.session_id ?? payment?.session_id ?? null,
         verifier_reference: responseBody?.verifier_reference ?? responseBody?.receipt_reference ?? null,
         settlement_status: responseBody?.settlement_status ?? "provisional"
       };
       const authorizedUnits = responseBody?.units_authorized ?? payment?.units_authorized;
-      if (result.ok && (!Number.isFinite(authorizedUnits) || authorizedUnits < requiredUnits)) {
+      if (!x402NativeFlow && result.ok && (!Number.isFinite(authorizedUnits) || authorizedUnits < requiredUnits)) {
         result.ok = false;
         result.reason = "ENTITLEMENT_REQUIRED";
         result.details = {

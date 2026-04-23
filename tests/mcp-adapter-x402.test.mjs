@@ -142,6 +142,71 @@ test("facilitator verifier rejects ok response without replay identity", async (
   assert.equal(result.reason, "PAYMENT_VERIFICATION_FAILED");
 });
 
+test("facilitator verifier accepts x402-native payment payload/requirements shape", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(
+      JSON.stringify({
+        isValid: true,
+        verifier_reference: "rcpt_123",
+        settlement_status: "settled"
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    verifierUrl: "http://facilitator.test",
+    timeoutMs: 2000,
+    logger: null
+  });
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        nonce: "0xabc"
+      }
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native",
+    entitlement: null
+  });
+
+  assert.equal(postedBody.paymentPayload.x402Version, 2);
+  assert.equal(postedBody.paymentRequirements.network, "eip155:84532");
+  assert.equal(result.ok, true);
+  assert.equal(result.nonce, "0xabc");
+});
+
 test("entitlement service creates provisional receipt and spend state", async (t) => {
   const store = makeStore(t);
   const verifier = new X402Verifier({ mode: "stub", logger: null });

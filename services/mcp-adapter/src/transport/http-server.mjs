@@ -112,7 +112,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "POST, GET, OPTIONS",
-    "access-control-allow-headers": "content-type, authorization"
+    "access-control-allow-headers": "content-type, authorization, payment-signature, x-payment"
   };
 }
 
@@ -123,18 +123,171 @@ const PAYMENT_ERROR_CODES = new Set([
   "PAYMENT_REPLAY_DETECTED"
 ]);
 
-function challengeHeaders(config, toolDef) {
+function safeBase64Encode(value) {
+  return Buffer.from(value, "utf8").toString("base64");
+}
+
+function safeBase64Decode(value) {
+  return Buffer.from(value, "base64").toString("utf8");
+}
+
+function normalizeNetworkToCaip2(network) {
+  const normalized = String(network ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return "eip155:84532";
+  }
+  if (normalized.includes(":")) {
+    return normalized;
+  }
+  if (normalized === "base-sepolia") {
+    return "eip155:84532";
+  }
+  if (normalized === "base") {
+    return "eip155:8453";
+  }
+  return normalized;
+}
+
+function supportedNetworks(config) {
+  return (config.x402SupportedNetworks ?? ["eip155:84532"]).map(normalizeNetworkToCaip2);
+}
+
+function resourceUrl(config, resourcePath) {
+  const origin = config.publicUrl ?? `http://${config.host}:${config.port}`;
+  return `${origin.replace(/\/$/, "")}${resourcePath}`;
+}
+
+function paymentRequiredEnvelope(config, toolDef, resourcePath) {
+  const units = Number(toolDef?.pricing?.units ?? 0);
+  const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
+  const challengeAmount = (unitAmountAtomic * BigInt(Math.max(units, 1))).toString();
+  const network = normalizeNetworkToCaip2((config.x402SupportedNetworks ?? [])[0] ?? "eip155:84532");
+  const extra = {};
+  if (config.x402Eip712Name) {
+    extra.name = config.x402Eip712Name;
+  }
+  if (config.x402Eip712Version) {
+    extra.version = config.x402Eip712Version;
+  }
+
+  return {
+    x402Version: 2,
+    error: "Payment required",
+    resource: {
+      url: resourceUrl(config, resourcePath),
+      description: toolDef?.description ?? "Paid Infopunks endpoint",
+      mimeType: "application/json"
+    },
+    accepts: [
+      {
+        scheme: config.x402PaymentScheme ?? "exact",
+        network,
+        amount: challengeAmount,
+        asset: config.x402PaymentAssetAddress,
+        payTo: config.x402PayTo,
+        maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
+        ...(Object.keys(extra).length > 0 ? { extra } : {})
+      }
+    ]
+  };
+}
+
+function challengeHeaders(config, toolDef, resourcePath = "/trust-score") {
   const units = toolDef?.pricing?.units ?? 0;
   const rail = "x402";
   const discovery = `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`;
+  const paymentRequired = paymentRequiredEnvelope(config, toolDef, resourcePath);
   return {
     "x402-required": "true",
     "x402-payment-rail": rail,
     "x402-pricing-units": String(units),
     "x402-accepted-assets": (config.x402AcceptedAssets ?? ["USDC"]).join(","),
-    "x402-supported-networks": (config.x402SupportedNetworks ?? ["base"]).join(","),
+    "x402-supported-networks": supportedNetworks(config).join(","),
     "x402-discovery": discovery,
+    "PAYMENT-REQUIRED": safeBase64Encode(JSON.stringify(paymentRequired)),
     "www-authenticate": `x402 realm="infopunks", units="${units}", rail="${rail}"`
+  };
+}
+
+function decodePaymentHeader(paymentHeader) {
+  if (typeof paymentHeader !== "string" || !paymentHeader.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(safeBase64Decode(paymentHeader));
+  } catch {
+    return null;
+  }
+}
+
+function extractPayerFromPayload(paymentPayload) {
+  const from = paymentPayload?.payload?.authorization?.from;
+  if (typeof from === "string" && from.trim()) {
+    return from;
+  }
+  return null;
+}
+
+function extractNonceFromPayload(paymentPayload) {
+  const nonce = paymentPayload?.payload?.authorization?.nonce;
+  if (typeof nonce === "string" && nonce.trim()) {
+    return nonce;
+  }
+  return null;
+}
+
+function paymentFromHeaders(headers) {
+  const paymentHeader = headers?.["payment-signature"] ?? headers?.["x-payment"];
+  const decodedPayload = decodePaymentHeader(paymentHeader);
+  if (!decodedPayload) {
+    return null;
+  }
+  const accepted = decodedPayload?.accepted ?? null;
+  return {
+    rail: "x402",
+    payer: extractPayerFromPayload(decodedPayload),
+    nonce: extractNonceFromPayload(decodedPayload),
+    asset: accepted?.asset ?? null,
+    network: accepted?.network ?? null,
+    paymentPayload: decodedPayload,
+    paymentRequirements: accepted
+  };
+}
+
+function mergeHeaderPayment(body, headers) {
+  const headerPayment = paymentFromHeaders(headers);
+  if (!headerPayment) {
+    return body;
+  }
+  if (body?.payment && typeof body.payment === "object") {
+    return {
+      ...body,
+      payment: {
+        ...headerPayment,
+        ...body.payment
+      }
+    };
+  }
+  return {
+    ...body,
+    payment: headerPayment
+  };
+}
+
+function attachHeaderPaymentToRpcRequest(request, headers) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    return request;
+  }
+  if (request.method !== "tools/call") {
+    return request;
+  }
+  const withPayment = mergeHeaderPayment(request.params?.arguments ?? {}, headers);
+  return {
+    ...request,
+    params: {
+      ...(request.params ?? {}),
+      arguments: withPayment
+    }
   };
 }
 
@@ -397,7 +550,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, corsHeaders());
         return;
       }
-      const body = bodyAndRaw.parsed ?? {};
+      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers);
       const normalized = normalizeTrustScoreRequest(body);
       if (!normalized.entity_id) {
         sendJson(
@@ -465,7 +618,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         const errorEnvelope = toMcpToolError(error, adapterTraceId, toolDef.operation).structuredContent;
         const code = errorEnvelope?.error?.code ?? "UPSTREAM_UNAVAILABLE";
         const statusCode = statusFromAdapterErrorCode(code, error?.status ?? 500);
-        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef) : {};
+        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, "/trust-score") : {};
 
         if (PAYMENT_ERROR_CODES.has(code)) {
           logger.info({
@@ -649,7 +802,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         const responses = [];
         for (const request of body) {
           try {
-            const response = await mcpServer.handleRequest(request, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
+            const normalizedRequest = attachHeaderPaymentToRpcRequest(request, req.headers);
+            const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
             if (response) {
               responses.push(response);
             }
@@ -661,20 +815,29 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             });
           }
         }
-        sendJson(res, 200, responses, {
+        const firstPaymentError = responses.find((item) => PAYMENT_ERROR_CODES.has(item?.result?.structuredContent?.error?.code));
+        const firstPaidRequest = body.find((request) => request?.method === "tools/call");
+        const toolDef = findTool(firstPaidRequest?.params?.name);
+        sendJson(res, firstPaymentError ? 402 : 200, responses, {
           ...corsHeaders(),
+          ...(firstPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
           "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
         });
       } else {
         try {
-          const response = await mcpServer.handleRequest(body, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
+          const normalizedRequest = attachHeaderPaymentToRpcRequest(body, req.headers);
+          const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
           if (!response) {
             res.writeHead(204, corsHeaders());
             res.end();
             return;
           }
-          sendJson(res, 200, response, {
+          const code = response?.result?.structuredContent?.error?.code;
+          const isPaymentError = PAYMENT_ERROR_CODES.has(code);
+          const toolDef = findTool(normalizedRequest?.params?.name);
+          sendJson(res, isPaymentError ? 402 : 200, response, {
             ...corsHeaders(),
+            ...(isPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
             "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
           });
         } catch (error) {

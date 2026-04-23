@@ -28,6 +28,8 @@ paths:
         "402":
           description: Payment required
           headers:
+            PAYMENT-REQUIRED:
+              schema: { type: string }
             x402-required:
               schema: { type: string, const: "true" }
             x402-pricing-units:
@@ -100,6 +102,26 @@ paths:
       responses:
         "200":
           description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "402":
+          description: Payment required for tools/call
+          headers:
+            PAYMENT-REQUIRED:
+              schema: { type: string }
+            x402-required:
+              schema: { type: string, const: "true" }
+            x402-pricing-units:
+              schema: { type: string }
+            x402-payment-rail:
+              schema: { type: string, const: x402 }
+            x402-accepted-assets:
+              schema: { type: string }
+            x402-supported-networks:
+              schema: { type: string }
           content:
             application/json:
               schema:

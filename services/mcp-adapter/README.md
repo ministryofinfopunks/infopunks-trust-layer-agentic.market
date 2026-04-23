@@ -41,7 +41,7 @@ Core:
 
 x402 verifier:
 - `X402_VERIFIER_MODE` (`facilitator|strict|stub`, default `facilitator`)
-- `X402_VERIFIER_URL` (required for `facilitator` mode)
+- `X402_VERIFIER_URL` (default `https://x402.org/facilitator`)
 - `X402_VERIFIER_API_KEY` (optional)
 - `X402_VERIFIER_TIMEOUT_MS` (default `5000`)
 - `X402_REQUIRED_DEFAULT` (`true|false`, default `true`)
@@ -52,7 +52,14 @@ Replay/spend controls:
 - `X402_REPLAY_WINDOW_SECONDS` (default `900`)
 - `INFOPUNKS_X402_DAILY_LIMIT_UNITS` (default `100`)
 - `X402_ACCEPTED_ASSETS` (CSV, default `USDC`)
-- `X402_SUPPORTED_NETWORKS` (CSV, default `base`)
+- `X402_SUPPORTED_NETWORKS` (CSV, default `eip155:84532`)
+- `X402_PAYMENT_SCHEME` (default `exact`)
+- `X402_PAYMENT_ASSET_ADDRESS` (default Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`)
+- `X402_PAY_TO` (required receiver address when payments are enabled)
+- `X402_PRICE_PER_UNIT_ATOMIC` (default `10000`)
+- `X402_PAYMENT_TIMEOUT_SECONDS` (default `300`)
+- `X402_EIP712_NAME` (default `USD Coin`)
+- `X402_EIP712_VERSION` (default `2`)
 - `X402_REQUIRE_PAYMENT_ASSET` (`true|false`, default `false`)
 - `X402_REQUIRE_PAYMENT_NETWORK` (`true|false`, default `false`)
 
@@ -225,7 +232,7 @@ Operator checklist proof (includes paid call, receipt creation, replay rejection
 
 ```bash
 MCP_ENTITLEMENT_TOKEN="<jwt>" \
-FACILITATOR_PAYMENT_JSON='{"rail":"x402","asset":"USDC","network":"base","payer":"agent_router","units_authorized":2,"nonce":"n_123","proof_id":"pf_123","session_id":"sess_123","reference":"rcpt_123"}' \
+FACILITATOR_PAYMENT_JSON='{"rail":"x402","asset":"USDC","network":"eip155:84532","payer":"agent_router","units_authorized":2,"nonce":"n_123","proof_id":"pf_123","session_id":"sess_123","reference":"rcpt_123"}' \
 MCP_ADAPTER_ADMIN_TOKEN="<admin_token>" \
 X402_SETTLEMENT_WEBHOOK_HMAC_SECRET="<webhook_hmac_secret>" \
 ./scripts/operator-production-checklist.sh https://mcp.infopunks.ai
