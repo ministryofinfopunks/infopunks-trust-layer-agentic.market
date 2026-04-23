@@ -46,9 +46,10 @@ export class UpstreamError extends Error {
 }
 
 export class InfopunksApiClient {
-  constructor({ baseUrl, token, logger = null }) {
+  constructor({ baseUrl, token, tokenSource = "unknown", logger = null }) {
     this.baseUrl = baseUrl;
     this.token = token;
+    this.tokenSource = tokenSource;
     this.logger = logger;
   }
 
@@ -68,7 +69,9 @@ export class InfopunksApiClient {
       adapter_trace_id: adapterTraceId ?? null,
       method,
       url,
-      request_body_keys: bodyKeys(body)
+      request_body_keys: bodyKeys(body),
+      auth_header_type: "authorization:bearer",
+      auth_token_source: this.tokenSource
     });
 
     try {

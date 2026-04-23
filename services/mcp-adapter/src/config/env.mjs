@@ -45,6 +45,31 @@ function normalizeX402Network(value) {
   return normalized;
 }
 
+function resolveInternalServiceToken() {
+  if (isNonEmptyString(process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN)) {
+    return {
+      token: process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN,
+      source: "INFOPUNKS_INTERNAL_SERVICE_TOKEN"
+    };
+  }
+  if (isNonEmptyString(process.env.INFOPUNKS_BACKEND_API_KEY)) {
+    return {
+      token: process.env.INFOPUNKS_BACKEND_API_KEY,
+      source: "INFOPUNKS_BACKEND_API_KEY"
+    };
+  }
+  if (isNonEmptyString(process.env.INFOPUNKS_API_KEY)) {
+    return {
+      token: process.env.INFOPUNKS_API_KEY,
+      source: "INFOPUNKS_API_KEY"
+    };
+  }
+  return {
+    token: "dev-infopunks-key",
+    source: "default_dev_fallback"
+  };
+}
+
 function validateConfig(config) {
   if (!isNonEmptyString(config.backendBaseUrl)) {
     throw new Error("INFOPUNKS_CORE_BASE_URL is required (or INFOPUNKS_BACKEND_URL).");
@@ -100,6 +125,11 @@ function validateConfig(config) {
 
   if (prodLike && config.internalServiceToken === "dev-infopunks-key") {
     throw new Error("INFOPUNKS_INTERNAL_SERVICE_TOKEN must be set in non-local environments.");
+  }
+  if (prodLike && config.internalServiceTokenSource === "INFOPUNKS_API_KEY") {
+    throw new Error(
+      "Use INFOPUNKS_INTERNAL_SERVICE_TOKEN (or INFOPUNKS_BACKEND_API_KEY) for adapter->core auth in non-local environments."
+    );
   }
 
   if (config.x402RequiredDefault && config.x402VerifierMode === "facilitator" && !isNonEmptyString(config.x402VerifierUrl)) {
@@ -221,11 +251,7 @@ export function loadEnv() {
   )
     ?.trim()
     .replace(/\/$/, "") ?? "";
-  const internalServiceToken =
-    process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN ??
-    process.env.INFOPUNKS_BACKEND_API_KEY ??
-    process.env.INFOPUNKS_API_KEY ??
-    "dev-infopunks-key";
+  const { token: internalServiceToken, source: internalServiceTokenSource } = resolveInternalServiceToken();
 
   const config = {
     transportMode: process.env.MCP_ADAPTER_TRANSPORT ?? "http",
@@ -235,6 +261,7 @@ export function loadEnv() {
     adapterVersion: "0.3.0",
     backendBaseUrl,
     internalServiceToken,
+    internalServiceTokenSource,
     publicUrl: process.env.MCP_ADAPTER_PUBLIC_URL ?? null,
     logLevel: process.env.MCP_ADAPTER_LOG_LEVEL ?? "info",
     x402VerifierMode: process.env.X402_VERIFIER_MODE ?? "facilitator",

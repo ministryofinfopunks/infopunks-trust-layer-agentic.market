@@ -31,9 +31,15 @@ import { quoteRiskTool } from "./tools/quote-risk.mjs";
 const config = loadEnv();
 const logger = new Logger(config.logLevel);
 const metrics = new Metrics();
+logger.info({
+  event: "adapter_core_auth_config",
+  auth_header_type: "authorization:bearer",
+  auth_token_source: config.internalServiceTokenSource
+});
 const apiClient = new InfopunksApiClient({
   baseUrl: config.backendBaseUrl,
   token: config.internalServiceToken,
+  tokenSource: config.internalServiceTokenSource,
   logger
 });
 const identityMappingStore = await createIdentityMappingStore(config);
