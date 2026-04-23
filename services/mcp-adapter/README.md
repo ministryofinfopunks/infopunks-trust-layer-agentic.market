@@ -36,7 +36,7 @@ Core:
 - `MCP_ADAPTER_PORT` (default `4021`)
 - `MCP_ADAPTER_PUBLIC_URL` (required in non-local HTTP mode)
 - `INFOPUNKS_CORE_BASE_URL` (default `http://127.0.0.1:4010`)
-- `INFOPUNKS_INTERNAL_SERVICE_TOKEN` (required for production)
+- `INFOPUNKS_INTERNAL_SERVICE_TOKEN` (required and must be explicitly set for non-local environments)
 - `MCP_ADAPTER_LOG_LEVEL` (`debug|info|warn|error`, default `info`)
 
 x402 verifier:

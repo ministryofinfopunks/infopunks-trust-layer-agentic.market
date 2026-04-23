@@ -126,6 +126,11 @@ function validateConfig(config) {
   if (prodLike && config.internalServiceToken === "dev-infopunks-key") {
     throw new Error("INFOPUNKS_INTERNAL_SERVICE_TOKEN must be set in non-local environments.");
   }
+  if (prodLike && !config.internalServiceTokenExplicitlyConfigured) {
+    throw new Error(
+      "INFOPUNKS_INTERNAL_SERVICE_TOKEN must be explicitly configured in non-local environments for adapter->core authentication."
+    );
+  }
   if (prodLike && config.internalServiceTokenSource === "INFOPUNKS_API_KEY") {
     throw new Error(
       "Use INFOPUNKS_INTERNAL_SERVICE_TOKEN (or INFOPUNKS_BACKEND_API_KEY) for adapter->core auth in non-local environments."
@@ -241,6 +246,7 @@ function validateConfig(config) {
 
 export function loadEnv() {
   const environment = process.env.INFOPUNKS_ENVIRONMENT ?? "local";
+  const internalServiceTokenExplicitlyConfigured = isNonEmptyString(process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN);
   const defaultBackendBaseUrl = (environment === "local" || environment === "test")
     ? "http://127.0.0.1:4010"
     : null;
@@ -262,6 +268,7 @@ export function loadEnv() {
     backendBaseUrl,
     internalServiceToken,
     internalServiceTokenSource,
+    internalServiceTokenExplicitlyConfigured,
     publicUrl: process.env.MCP_ADAPTER_PUBLIC_URL ?? null,
     logLevel: process.env.MCP_ADAPTER_LOG_LEVEL ?? "info",
     x402VerifierMode: process.env.X402_VERIFIER_MODE ?? "facilitator",

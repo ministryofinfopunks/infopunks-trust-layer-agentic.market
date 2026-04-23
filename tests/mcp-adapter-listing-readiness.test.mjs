@@ -155,3 +155,19 @@ test("loadEnv rejects localhost core URL in non-local environments", () => {
     /cannot point to localhost\/loopback/i
   );
 });
+
+test("loadEnv requires explicit INFOPUNKS_INTERNAL_SERVICE_TOKEN in non-local environments", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "production",
+          INFOPUNKS_CORE_BASE_URL: "https://infopunks-core-api.onrender.com",
+          INFOPUNKS_INTERNAL_SERVICE_TOKEN: null,
+          INFOPUNKS_BACKEND_API_KEY: "some-token"
+        },
+        () => loadEnv()
+      ),
+    /must be explicitly configured/i
+  );
+});
