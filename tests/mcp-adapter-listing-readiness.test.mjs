@@ -126,3 +126,32 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
   assert.deepEqual(config.x402SupportedNetworks, ["eip155:84532"]);
   assert.equal(config.x402VerifierUrl, "https://x402.org/facilitator");
 });
+
+test("loadEnv requires explicit core base URL outside local/test", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "production",
+          INFOPUNKS_CORE_BASE_URL: null,
+          INFOPUNKS_BACKEND_URL: null
+        },
+        () => loadEnv()
+      ),
+    /INFOPUNKS_CORE_BASE_URL is required/
+  );
+});
+
+test("loadEnv rejects localhost core URL in non-local environments", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "production",
+          INFOPUNKS_CORE_BASE_URL: "http://127.0.0.1:4010"
+        },
+        () => loadEnv()
+      ),
+    /cannot point to localhost\/loopback/i
+  );
+});

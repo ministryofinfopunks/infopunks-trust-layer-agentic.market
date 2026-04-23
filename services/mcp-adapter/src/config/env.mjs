@@ -46,6 +46,10 @@ function normalizeX402Network(value) {
 }
 
 function validateConfig(config) {
+  if (!isNonEmptyString(config.backendBaseUrl)) {
+    throw new Error("INFOPUNKS_CORE_BASE_URL is required (or INFOPUNKS_BACKEND_URL).");
+  }
+
   let backendUrl;
   try {
     backendUrl = new URL(String(config.backendBaseUrl ?? ""));
@@ -54,6 +58,10 @@ function validateConfig(config) {
   }
   if (!["http:", "https:"].includes(backendUrl.protocol)) {
     throw new Error("INFOPUNKS_CORE_BASE_URL must use http:// or https://.");
+  }
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (isProductionLike(config.environment) && loopbackHosts.has(backendUrl.hostname.toLowerCase())) {
+    throw new Error("INFOPUNKS_CORE_BASE_URL cannot point to localhost/loopback in non-local environments.");
   }
 
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
@@ -202,13 +210,17 @@ function validateConfig(config) {
 }
 
 export function loadEnv() {
+  const environment = process.env.INFOPUNKS_ENVIRONMENT ?? "local";
+  const defaultBackendBaseUrl = (environment === "local" || environment === "test")
+    ? "http://127.0.0.1:4010"
+    : null;
   const backendBaseUrl = (
     process.env.INFOPUNKS_CORE_BASE_URL ??
     process.env.INFOPUNKS_BACKEND_URL ??
-    "http://127.0.0.1:4010"
+    defaultBackendBaseUrl
   )
-    .trim()
-    .replace(/\/$/, "");
+    ?.trim()
+    .replace(/\/$/, "") ?? "";
   const internalServiceToken =
     process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN ??
     process.env.INFOPUNKS_BACKEND_API_KEY ??
@@ -250,7 +262,7 @@ export function loadEnv() {
     x402Eip712Version: process.env.X402_EIP712_VERSION ?? "2",
     x402RequirePaymentAsset: String(process.env.X402_REQUIRE_PAYMENT_ASSET ?? "false") === "true",
     x402RequirePaymentNetwork: String(process.env.X402_REQUIRE_PAYMENT_NETWORK ?? "false") === "true",
-    environment: process.env.INFOPUNKS_ENVIRONMENT ?? "local",
+    environment,
     defaultDomain: process.env.INFOPUNKS_MCP_DEFAULT_DOMAIN ?? "general",
     defaultRiskLevel: process.env.INFOPUNKS_MCP_DEFAULT_RISK_LEVEL ?? "medium",
     callerResolutionPolicy: process.env.INFOPUNKS_CALLER_RESOLUTION_POLICY ?? "lazy-register",
