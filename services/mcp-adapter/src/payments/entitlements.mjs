@@ -1,4 +1,5 @@
 import { TOOL_PRICING } from "../config/pricing.mjs";
+import { canonicalAddressForSymbol } from "../config/x402-token-metadata.mjs";
 import { makeAdapterError } from "../schemas/error-schema.mjs";
 
 function isHexAddress(value) {
@@ -25,17 +26,8 @@ function normalizeNetwork(value) {
 }
 
 function assetAddressForSymbol(symbol, network) {
-  const key = String(symbol ?? "").toUpperCase();
-  if (key !== "USDC") {
-    return null;
-  }
-  if (network === "eip155:84532") {
-    return "0x036CbD53842c5426634e7929541eC2318f3dCF7e".toLowerCase();
-  }
-  if (network === "eip155:8453") {
-    return "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913".toLowerCase();
-  }
-  return null;
+  const address = canonicalAddressForSymbol(network, symbol);
+  return address ? normalizeAddress(address) : null;
 }
 
 function normalizeConfiguredAssets(acceptedAssets, network) {

@@ -7,6 +7,7 @@ import { buildAiPluginManifest } from "../config/ai-plugin.mjs";
 import { buildBazaarDiscoveryDocument } from "../config/bazaar-discovery.mjs";
 import { buildMarketplaceManifest } from "../config/marketplace-manifest.mjs";
 import { findTool } from "../config/tool-registry.mjs";
+import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
@@ -162,12 +163,21 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
   const challengeAmount = (unitAmountAtomic * BigInt(Math.max(units, 1))).toString();
   const network = normalizeNetworkToCaip2((config.x402SupportedNetworks ?? [])[0] ?? "eip155:84532");
+  const tokenMetadata = resolveExactEvmTokenMetadata({
+    network,
+    assetAddress: config.x402PaymentAssetAddress,
+    fallbackName: config.x402Eip712Name,
+    fallbackVersion: config.x402Eip712Version
+  });
   const extra = {};
-  if (config.x402Eip712Name) {
-    extra.name = config.x402Eip712Name;
+  if (tokenMetadata.name) {
+    extra.name = tokenMetadata.name;
   }
-  if (config.x402Eip712Version) {
-    extra.version = config.x402Eip712Version;
+  if (tokenMetadata.version) {
+    extra.version = tokenMetadata.version;
+  }
+  if (tokenMetadata.symbol) {
+    extra.symbol = tokenMetadata.symbol;
   }
 
   return {

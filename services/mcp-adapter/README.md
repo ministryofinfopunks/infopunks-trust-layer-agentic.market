@@ -58,7 +58,7 @@ Replay/spend controls:
 - `X402_PAY_TO` (required receiver address when payments are enabled)
 - `X402_PRICE_PER_UNIT_ATOMIC` (default `10000`)
 - `X402_PAYMENT_TIMEOUT_SECONDS` (default `300`)
-- `X402_EIP712_NAME` (default `USD Coin`)
+- `X402_EIP712_NAME` (default `USDC`)
 - `X402_EIP712_VERSION` (default `2`)
 - `X402_REQUIRE_PAYMENT_ASSET` (`true|false`, default `false`)
 - `X402_REQUIRE_PAYMENT_NETWORK` (`true|false`, default `false`)

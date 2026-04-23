@@ -58,6 +58,11 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(headers["x402-accepted-assets"], "USDC");
   assert.equal(headers["x402-supported-networks"], "eip155:84532");
   assert.equal(typeof headers["PAYMENT-REQUIRED"], "string");
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.equal(decoded.accepts[0].network, "eip155:84532");
+  assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+  assert.equal(decoded.accepts[0].extra.name, "USDC");
+  assert.equal(decoded.accepts[0].extra.version, "2");
   assert.match(headers["x402-discovery"], /\/\.well-known\/x402-bazaar\.json$/);
 });
 

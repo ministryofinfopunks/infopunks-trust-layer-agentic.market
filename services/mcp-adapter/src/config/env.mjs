@@ -236,7 +236,7 @@ export function loadEnv() {
     x402PayTo: process.env.X402_PAY_TO ?? "",
     x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? "10000",
     x402PaymentTimeoutSeconds: Number(process.env.X402_PAYMENT_TIMEOUT_SECONDS ?? 300),
-    x402Eip712Name: process.env.X402_EIP712_NAME ?? "USD Coin",
+    x402Eip712Name: process.env.X402_EIP712_NAME ?? "USDC",
     x402Eip712Version: process.env.X402_EIP712_VERSION ?? "2",
     x402RequirePaymentAsset: String(process.env.X402_REQUIRE_PAYMENT_ASSET ?? "false") === "true",
     x402RequirePaymentNetwork: String(process.env.X402_REQUIRE_PAYMENT_NETWORK ?? "false") === "true",
