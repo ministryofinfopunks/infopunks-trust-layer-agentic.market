@@ -162,7 +162,7 @@ export function loadEnv() {
   const config = {
     transportMode: process.env.MCP_ADAPTER_TRANSPORT ?? "http",
     host: process.env.MCP_ADAPTER_HOST ?? "0.0.0.0",
-    port: Number(process.env.MCP_ADAPTER_PORT ?? 4021),
+    port: Number(process.env.PORT ?? process.env.MCP_ADAPTER_PORT ?? 4021),
     adapterName: "infopunks-trust-mcp-adapter",
     adapterVersion: "0.3.0",
     backendBaseUrl,
