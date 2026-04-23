@@ -3,6 +3,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_POLICY } from "../../../packages/schema/index.mjs";
 
+const DATA_DIR = process.env.DATA_DIR || path.resolve("./data");
+
 function runStatements(db, sql) {
   for (const statement of sql
     .split(";")
@@ -21,8 +23,10 @@ function safeExec(db, sql) {
 }
 
 export function initDb(dbPath) {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
+  const resolvedDbPath = dbPath ? path.resolve(dbPath) : path.join(DATA_DIR, "infopunks.production.db");
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(resolvedDbPath), { recursive: true });
+  const db = new DatabaseSync(resolvedDbPath);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   runStatements(

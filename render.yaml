@@ -13,7 +13,9 @@ services:
       - key: PORT
         value: "4010"
       - key: INFOPUNKS_DB_PATH
-        value: /var/data/infopunks.production.db
+        value: ./data/infopunks.production.db
+      - key: DATA_DIR
+        value: ./data
       - key: INFOPUNKS_API_KEY
         sync: false
 
