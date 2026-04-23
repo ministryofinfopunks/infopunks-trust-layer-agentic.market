@@ -64,6 +64,8 @@ services:
         sync: false
       - key: MCP_ENTITLEMENT_ALLOWED_ALGORITHMS
         value: RS256
+      - key: MCP_ENTITLEMENT_EXEMPT_TOOLS
+        value: resolve_trust
       - key: MCP_ENTITLEMENT_RS256_PUBLIC_KEY
         sync: false
       - key: MCP_ADAPTER_MULTI_INSTANCE_MODE

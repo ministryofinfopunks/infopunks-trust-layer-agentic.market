@@ -72,18 +72,26 @@ export class McpServer {
     ].join(":");
     await this.rateLimiter.hit(rateKey);
 
+    const entitlementExemptTools = new Set(this.config.entitlementExemptTools ?? []);
+    const isEntitlementExempt = entitlementExemptTools.has(toolDef.name) || entitlementExemptTools.has(toolDef.operation);
     const requiresEntitlementToken = Boolean(
-      this.config.entitlementTokenRequired ||
-      (this.config.entitlementRequireForPaidTools && toolDef.pricing?.mode === "metered")
+      !isEntitlementExempt && (
+        this.config.entitlementTokenRequired ||
+        (this.config.entitlementRequireForPaidTools && toolDef.pricing?.mode === "metered")
+      )
     );
-    const entitlement = await (this.tokenValidator?.validate({
-      token: this.tokenValidator.extractToken(transportContext),
-      toolName: toolDef.name,
-      adapterTraceId,
-      callerContext,
-      paymentContext: args.payment ?? null,
-      required: requiresEntitlementToken
-    }) ?? null);
+    const extractedToken = this.tokenValidator?.extractToken(transportContext) ?? null;
+    let entitlement = null;
+    if (this.tokenValidator && (requiresEntitlementToken || extractedToken)) {
+      entitlement = await this.tokenValidator.validate({
+        token: extractedToken,
+        toolName: toolDef.name,
+        adapterTraceId,
+        callerContext,
+        paymentContext: args.payment ?? null,
+        required: requiresEntitlementToken
+      });
+    }
 
     let caller = null;
     if (args.agent) {

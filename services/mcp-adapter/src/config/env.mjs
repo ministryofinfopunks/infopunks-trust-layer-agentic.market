@@ -231,6 +231,10 @@ export function loadEnv() {
       .split(",")
       .map((entry) => entry.trim())
       .filter(Boolean),
+    entitlementExemptTools: (process.env.MCP_ENTITLEMENT_EXEMPT_TOOLS ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
     entitlementClockSkewSeconds: Number(process.env.MCP_ENTITLEMENT_CLOCK_SKEW_SECONDS ?? 30),
     entitlementMaxTtlSeconds: Number(process.env.MCP_ENTITLEMENT_MAX_TTL_SECONDS ?? 3600)
   };
