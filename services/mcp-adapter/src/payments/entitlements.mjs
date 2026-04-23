@@ -2,7 +2,15 @@ import { TOOL_PRICING } from "../config/pricing.mjs";
 import { makeAdapterError } from "../schemas/error-schema.mjs";
 
 function isHexAddress(value) {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/i.test(value);
+}
+
+function normalizeAddress(value) {
+  if (!isHexAddress(value)) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  return `0x${trimmed.slice(2).toLowerCase()}`;
 }
 
 function normalizeNetwork(value) {
@@ -40,7 +48,7 @@ function normalizeConfiguredAssets(acceptedAssets, network) {
       continue;
     }
     if (isHexAddress(value)) {
-      normalizedAddresses.add(value.toLowerCase());
+      normalizedAddresses.add(normalizeAddress(value));
       continue;
     }
     const symbol = value.toUpperCase();
@@ -60,7 +68,7 @@ function isAcceptedAsset({ paymentAssetRaw, network, acceptedAssets }) {
   }
   const { normalizedSymbols, normalizedAddresses } = normalizeConfiguredAssets(acceptedAssets, network);
   if (isHexAddress(paymentAssetRaw)) {
-    return normalizedAddresses.has(paymentAssetRaw.toLowerCase());
+    return normalizedAddresses.has(normalizeAddress(paymentAssetRaw));
   }
   const symbol = paymentAssetRaw.toUpperCase();
   if (normalizedSymbols.has(symbol)) {

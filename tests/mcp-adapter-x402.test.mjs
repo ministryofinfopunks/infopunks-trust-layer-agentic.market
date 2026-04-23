@@ -272,6 +272,42 @@ test("entitlement service accepts Base Sepolia USDC contract address when config
   assert.equal(result.billed_units, 1);
 });
 
+test("entitlement service accepts Base Sepolia USDC contract address with 0X prefix", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:84532"]
+    },
+    logger: null
+  });
+
+  const result = await entitlementService.authorizeAndBill({
+    operation: "resolve_trust",
+    payment: {
+      rail: "x402",
+      payer: "payer-asset-address-uppercase",
+      units_authorized: 5,
+      nonce: "n-asset-address-uppercase",
+      network: "eip155:84532",
+      asset: "0X036CBD53842C5426634E7929541EC2318F3DCF7E"
+    },
+    fallbackPayer: "payer-asset-address-uppercase",
+    spendLimitUnits: 100,
+    adapterTraceId: "mcp_trc_asset_addr_upper",
+    entitlement: null
+  });
+
+  assert.equal(result.billed_units, 1);
+});
+
 test("entitlement service rejects unsupported asset address", async (t) => {
   const store = makeStore(t);
   const verifier = new X402Verifier({ mode: "stub", logger: null });
