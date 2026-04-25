@@ -35,9 +35,11 @@ Core:
 - `MCP_ADAPTER_HOST` (default `0.0.0.0`)
 - `MCP_ADAPTER_PORT` (default `4021`)
 - `MCP_ADAPTER_PUBLIC_URL` (required in non-local HTTP mode)
-- `INFOPUNKS_CORE_BASE_URL` (default `http://127.0.0.1:4010`)
+- `INFOPUNKS_CORE_BASE_URL` (default `http://127.0.0.1:4010` only in local/test; required in non-local)
 - `INFOPUNKS_INTERNAL_SERVICE_TOKEN` (required and must be explicitly set for non-local environments)
 - `MCP_ADAPTER_LOG_LEVEL` (`debug|info|warn|error`, default `info`)
+- `DATA_DIR` (optional shared runtime data root)
+- `MCP_ADAPTER_RUNTIME_DIR` (optional explicit runtime dir for adapter state/mapping files)
 
 x402 verifier:
 - `X402_VERIFIER_MODE` (`facilitator|strict|stub`, default `facilitator`)
@@ -102,6 +104,7 @@ Entitlement/session token validation:
 
 Startup safety checks (fail-fast):
 - In non-local environments, `X402_VERIFIER_MODE=stub` is blocked unless `X402_ALLOW_STUB_MODE=true`.
+- In non-local environments, localhost/loopback upstream URLs are rejected (`INFOPUNKS_CORE_BASE_URL` must be a real service URL).
 - In non-local HTTP mode, `MCP_ADAPTER_ADMIN_TOKEN` is required by default.
 - In non-local HTTP mode, settlement webhook auth is required by default (`X402_SETTLEMENT_WEBHOOK_HMAC_SECRET` or `X402_SETTLEMENT_WEBHOOK_SECRET`).
 - When x402 is required and verifier mode is `facilitator`, `X402_VERIFIER_URL` is mandatory.
@@ -109,6 +112,14 @@ Startup safety checks (fail-fast):
   - `MCP_ADAPTER_STATE_STORE_DRIVER=postgres`
   - `INFOPUNKS_MCP_IDENTITY_MAP_DRIVER=postgres`
   - `MCP_ADAPTER_RATE_LIMIT_DRIVER=postgres`
+
+## Launch Mode (Explicit, Config-Driven)
+
+For public bootstrap/testing windows, you can explicitly exempt selected tools from entitlement tokens:
+
+- `MCP_ENTITLEMENT_EXEMPT_TOOLS=resolve_trust,get_passport`
+
+This is reversible and should be removed after launch bootstrap is complete.
 
 ## MCP Tool List
 

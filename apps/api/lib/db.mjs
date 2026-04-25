@@ -1,9 +1,14 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_POLICY } from "../../../packages/schema/index.mjs";
 
-const DATA_DIR = process.env.DATA_DIR || path.resolve("./data");
+const environment = process.env.INFOPUNKS_ENVIRONMENT || "local";
+const DATA_DIR = process.env.DATA_DIR
+  || ((environment === "local" || environment === "test")
+    ? path.resolve("./data")
+    : path.join(os.tmpdir(), "infopunks"));
 
 function runStatements(db, sql) {
   for (const statement of sql

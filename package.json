@@ -29,6 +29,13 @@
     "speccheck": "node scripts/generate-openapi-artifacts.mjs --check && node scripts/speccheck.mjs",
     "ci": "npm run lint && npm run typecheck && npm test && npm run speccheck",
     "seed": "node scripts/seed/seed-demo.mjs",
+    "seed:war-room-events": "node scripts/seed/seed-war-room-events.mjs",
+    "bootstrap:subject": "node scripts/bootstrap/register-subject.mjs",
+    "hardening:sim": "node --test tests/mcp-adapter-hardening-sim.test.mjs",
+    "demo:agentic-hook": "node examples/agentic-first-hook.js",
+    "proof:paid-call": "node scripts/proof/paid-call.mjs",
+    "proof:paid-sequence": "node scripts/proof/paid-sequence.mjs",
+    "smoke:mainnet": "node scripts/mainnet-smoke.mjs",
     "replay": "node scripts/replay/replay-trace.mjs",
     "mcp:adapter": "node services/mcp-adapter/src/index.mjs"
   },

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { advanceMockWarRoomState, createMockWarRoomState, mockTraceReplay } from "./mock-state";
 
 const DEFAULT_API_KEY = "dev-infopunks-read-key";
+const PAID_EVENTS_POLL_MS = 4000;
 
 function formatEventLabel(event) {
   return `${event.event_type ?? event.type} · ${event.subject_id ?? event.subject}`;
@@ -57,9 +58,30 @@ export function useWarRoomState() {
 
   const loadLiveState = useCallback(async () => {
     const state = await fetchJson("/v1/war-room/state");
-    setWarRoomState(state);
-    setLatestSignal(state.live_trust_event_feed?.[0] ?? null);
-    setLastEvent(state.live_trust_event_feed?.[0] ? formatEventLabel(state.live_trust_event_feed[0]) : "Waiting");
+    let paidEvents = [];
+    try {
+      const paidFeed = await fetchJson("/api/war-room/events");
+      paidEvents = Array.isArray(paidFeed?.events)
+        ? paidFeed.events.map((event) => ({
+            event_type: event.event_type,
+            subject_id: event.subject_id,
+            severity: event.status ?? event.mode ?? "",
+            data: event
+          }))
+        : [];
+    } catch {
+      paidEvents = [];
+    }
+
+    const nextState = paidEvents.length > 0
+      ? {
+          ...state,
+          live_trust_event_feed: paidEvents
+        }
+      : state;
+    setWarRoomState(nextState);
+    setLatestSignal(nextState.live_trust_event_feed?.[0] ?? null);
+    setLastEvent(nextState.live_trust_event_feed?.[0] ? formatEventLabel(nextState.live_trust_event_feed[0]) : "Waiting");
   }, [fetchJson]);
 
   const queueLiveRefresh = useCallback(() => {
@@ -190,9 +212,15 @@ export function useWarRoomState() {
     }
 
     connectStream();
+    const paidPoll = window.setInterval(() => {
+      loadLiveState().catch(() => {
+        // Keep prior state when paid feed polling fails.
+      });
+    }, PAID_EVENTS_POLL_MS);
 
     return () => {
       closed = true;
+      window.clearInterval(paidPoll);
       stopMockLoop();
       stopPendingRefresh();
       if (streamAbortRef.current) {

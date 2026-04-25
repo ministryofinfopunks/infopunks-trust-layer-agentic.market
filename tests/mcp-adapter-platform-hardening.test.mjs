@@ -35,12 +35,23 @@ function withEnv(overrides, fn) {
 
 function makeProdOverrides(extra = {}) {
   return {
+    NODE_ENV: "production",
     INFOPUNKS_ENVIRONMENT: "production",
     MCP_ADAPTER_TRANSPORT: "http",
+    PUBLIC_BASE_URL: "https://mcp.infopunks.ai",
     MCP_ADAPTER_PUBLIC_URL: "https://mcp.infopunks.ai",
+    INFOPUNKS_CORE_BASE_URL: "https://infopunks-core-api.onrender.com",
     INFOPUNKS_INTERNAL_SERVICE_TOKEN: "prod-token",
     X402_VERIFIER_MODE: "facilitator",
     X402_VERIFIER_URL: "https://verifier.example.com",
+    X402_FACILITATOR_URL: "https://verifier.example.com",
+    X402_NETWORK: "base",
+    X402_ASSET: "USDC",
+    X402_PRICE_USD: "0.01",
+    X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+    ALLOW_TESTNET: "false",
+    ALLOW_RELAXED_PAYMENT: "false",
     MCP_ADAPTER_ADMIN_TOKEN: "admin-token",
     X402_SETTLEMENT_WEBHOOK_HMAC_SECRET: "whsec",
     MCP_ENTITLEMENT_ISSUER: "agentic.market",
@@ -73,8 +84,28 @@ test("loadEnv requires webhook auth in non-local HTTP mode", () => {
 
 test("loadEnv requires verifier URL when facilitator mode is enabled", () => {
   assert.throws(
-    () => withEnv(makeProdOverrides({ X402_VERIFIER_URL: null }), () => loadEnv()),
+    () => withEnv(makeProdOverrides({ X402_VERIFIER_URL: "", X402_FACILITATOR_URL: "" }), () => loadEnv()),
     (error) => String(error?.message ?? "").includes("X402_VERIFIER_URL")
+  );
+});
+
+test("loadEnv blocks Base Sepolia/testnet markers in NODE_ENV production", () => {
+  assert.throws(
+    () => withEnv(makeProdOverrides({
+      X402_NETWORK: "base-sepolia",
+      X402_PAYMENT_ASSET_ADDRESS: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    }), () => loadEnv()),
+    (error) => String(error?.message ?? "").includes("X402_NETWORK=base")
+  );
+});
+
+test("loadEnv requires production public HTTPS URL and relaxed payment disabled", () => {
+  assert.throws(
+    () => withEnv(makeProdOverrides({
+      PUBLIC_BASE_URL: "http://localhost:4021",
+      ALLOW_RELAXED_PAYMENT: "true"
+    }), () => loadEnv()),
+    (error) => String(error?.message ?? "").includes("PUBLIC_BASE_URL must use HTTPS")
   );
 });
 

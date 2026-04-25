@@ -105,8 +105,20 @@ Trust-score response shape:
 {
   "entity_id": "string",
   "trust_score": 0,
+  "score": 0,
   "risk_level": "low|medium|high|critical",
   "confidence": 0,
+  "trust_state": "UNKNOWN|VERIFIED|DEGRADING|RISKY|COMPROMISED|QUARANTINED",
+  "trust_vector": {
+    "executionReliability": 0,
+    "economicIntegrity": 0,
+    "identityCredibility": 0,
+    "behavioralStability": 0,
+    "dependencyRisk": 0,
+    "adversarialRisk": 0,
+    "evidenceFreshness": 0,
+    "overallTrust": 0
+  },
   "last_updated": "ISO-8601 timestamp",
   "signals": [
     {
@@ -118,9 +130,32 @@ Trust-score response shape:
   "policy": {
     "route": "allow|degrade|quarantine|block",
     "reason": "string"
+  },
+  "policy_engine": {
+    "allow": true,
+    "action": "ALLOW|RATE_LIMIT|REQUIRE_ESCROW|REQUIRE_SECONDARY_VALIDATION|MANUAL_REVIEW|BLOCK|QUARANTINE",
+    "routingPriority": 0,
+    "maxRequestsPerMinute": 120,
+    "escrowRequired": false,
+    "secondaryValidationRequired": false,
+    "reasonCodes": [],
+    "humanReadableSummary": "string"
+  },
+  "evidence": {
+    "lastEvidenceAt": "ISO-8601 timestamp",
+    "sampleSize": 0,
+    "recentEvents": []
+  },
+  "agentic_market": {
+    "serviceType": "trust-resolution",
+    "pricingHint": "x402-metered",
+    "x402Required": true,
+    "version": "trust-v1"
   }
 }
 ```
+
+Backward compatibility is preserved: legacy clients can keep using `trust_score`, `risk_level`, and `policy.route`.
 
 ## Local Run (Safe Test First)
 
@@ -203,6 +238,19 @@ Why:
 Use:
 - `render.yaml` for service topology
 - `.env.example` for required secrets/vars
+- `docs/deployment-handoff.md` for operator checklist and first paid-call walkthrough
+- `docs/first-paid-trust-call.md` for a concise copy-paste paid-flow runbook
+
+## Test Subject Bootstrap
+
+Create a subject/passport in the core API for paid trust-score testing:
+
+```bash
+npm run bootstrap:subject -- \
+  --subject-id agent_001 \
+  --base-url https://infopunks-core-api.onrender.com \
+  --api-key <core_api_key>
+```
 
 ## How this gets discovered on Agentic Market / x402 Bazaar
 

@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import { toMcpToolError } from "../middleware/error-handler.mjs";
 const MAX_BODY_BYTES = 1024 * 1024;
 const ADAPTER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OPENAPI_FILE = path.join(ADAPTER_ROOT, "..", "openapi.yaml");
+const WAR_ROOM_ROOT = path.join(ADAPTER_ROOT, "..", "..", "..", "apps", "war-room");
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
@@ -24,6 +25,11 @@ function sendJson(res, statusCode, payload, extraHeaders = {}) {
     ...extraHeaders
   });
   res.end(body);
+}
+
+function sendOpenApiJson(res, config) {
+  const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+  sendJson(res, 200, buildOpenApiJson(origin, config), corsHeaders());
 }
 
 function sendText(res, statusCode, text, extraHeaders = {}) {
@@ -144,7 +150,7 @@ function normalizeNetworkToCaip2(network) {
     return "eip155:84532";
   }
   if (normalized === "base") {
-    return "eip155:84532";
+    return "eip155:8453";
   }
   return normalized;
 }
@@ -266,21 +272,46 @@ function paymentFromHeaders(headers) {
 
 function mergeHeaderPayment(body, headers) {
   const headerPayment = paymentFromHeaders(headers);
+  const idempotencyKey = headers?.["idempotency-key"] ?? headers?.["x-idempotency-key"] ?? null;
+  const requestTimestamp = headers?.["x-request-timestamp"] ?? null;
+  const nonce = headers?.["x-payment-nonce"] ?? null;
   if (!headerPayment) {
-    return body;
+    if (!body || typeof body !== "object") {
+      return body;
+    }
+    if (!body.payment || typeof body.payment !== "object") {
+      return body;
+    }
+    return {
+      ...body,
+      payment: {
+        ...body.payment,
+        ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+        ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+        ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
+      }
+    };
   }
   if (body?.payment && typeof body.payment === "object") {
     return {
       ...body,
       payment: {
         ...headerPayment,
-        ...body.payment
+        ...body.payment,
+        ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+        ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+        ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
       }
     };
   }
   return {
     ...body,
-    payment: headerPayment
+    payment: {
+      ...headerPayment,
+      ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+      ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+      ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
+    }
   };
 }
 
@@ -368,6 +399,13 @@ function buildSignals(result = {}) {
     value: result.band ?? "unknown",
     weight: 0.45
   });
+  if (result.trust_state || result.trustState) {
+    signals.push({
+      name: "trust_state",
+      value: result.trust_state ?? result.trustState,
+      weight: 0.5
+    });
+  }
   return signals.slice(0, 8);
 }
 
@@ -392,27 +430,249 @@ function normalizeTrustScoreRequest(body = {}) {
 
 function toTrustScoreResponse(request, toolOutput) {
   const result = toolOutput?.result ?? {};
-  const score = toNumeric(result.score, 0);
+  const vector = (result.trust_vector ?? result.trustVector) ?? {};
+  const score = toNumeric(result.score, toNumeric(result.trust_score, toNumeric(vector.overallTrust, 0)));
   const confidence = toNumeric(result.confidence, 0);
   const route = toPolicyRoute(result.decision);
   const reasonCodes = Array.isArray(result.reason_codes) ? result.reason_codes : [];
-  const reason = reasonCodes.length > 0 ? reasonCodes.join(",") : String(result.decision ?? "policy_default");
+  const reason = reasonCodes.length > 0
+    ? reasonCodes.join(",")
+    : String(result.reason ?? result.decision ?? "policy_default");
+  const policy = result.trust_policy ?? result.policy ?? null;
+  const evidence = result.trust_evidence ?? result.evidence ?? null;
+  const agenticMarket = result.agentic_market ?? result.agenticMarket ?? null;
+  const mode = typeof result.mode === "string" && result.mode.trim()
+    ? result.mode.trim()
+    : (route === "allow" ? "verified" : "degraded");
 
   return {
     entity_id: String(request.entity_id),
     trust_score: Math.max(0, Math.min(100, Math.round(score))),
+    score: Math.max(0, Math.min(100, Math.round(score))),
     risk_level: toRiskLevel({ score, band: result.band }),
     confidence: Math.max(0, Math.min(1, Number(confidence.toFixed(4)))),
+    mode,
+    trust_state: result.trust_state ?? result.trustState ?? "UNKNOWN",
+    trust_vector: {
+      executionReliability: Math.max(0, Math.min(100, Math.round(toNumeric(vector.executionReliability, score)))),
+      economicIntegrity: Math.max(0, Math.min(100, Math.round(toNumeric(vector.economicIntegrity, score)))),
+      identityCredibility: Math.max(0, Math.min(100, Math.round(toNumeric(vector.identityCredibility, score)))),
+      behavioralStability: Math.max(0, Math.min(100, Math.round(toNumeric(vector.behavioralStability, score)))),
+      dependencyRisk: Math.max(0, Math.min(100, Math.round(toNumeric(vector.dependencyRisk, 0)))),
+      adversarialRisk: Math.max(0, Math.min(100, Math.round(toNumeric(vector.adversarialRisk, 0)))),
+      evidenceFreshness: Math.max(0, Math.min(100, Math.round(toNumeric(vector.evidenceFreshness, 0)))),
+      overallTrust: Math.max(0, Math.min(100, Math.round(toNumeric(vector.overallTrust, score))))
+    },
     last_updated: result.expires_at ?? new Date().toISOString(),
     signals: buildSignals(result),
     policy: {
       route,
       reason
+    },
+    policy_engine: policy,
+    evidence,
+    agentic_market: agenticMarket
+  };
+}
+
+function reasonsFromResult(result = {}) {
+  if (Array.isArray(result.reason_codes) && result.reason_codes.length > 0) {
+    return result.reason_codes.map(String);
+  }
+  if (typeof result.reason === "string" && result.reason.trim()) {
+    return [result.reason.trim()];
+  }
+  if (typeof result.decision === "string" && result.decision.trim()) {
+    return [result.decision.trim()];
+  }
+  return ["policy_default"];
+}
+
+function toResolveTrustV1Response(request, toolOutput, config) {
+  const result = toolOutput?.result ?? {};
+  const trustResponse = toTrustScoreResponse(request, toolOutput);
+  const receipt = toolOutput?.meta?.x402_receipt ?? null;
+  const network = receipt?.network
+    ?? toolOutput?.meta?.x402_receipt?.paymentRequirements?.network
+    ?? (config.x402SupportedNetworks ?? [])[0]
+    ?? null;
+  const asset = receipt?.asset
+    ?? toolOutput?.meta?.x402_receipt?.paymentRequirements?.asset
+    ?? config.x402PaymentAssetAddress
+    ?? (config.x402AcceptedAssets ?? [])[0]
+    ?? null;
+
+  return {
+    subject_id: String(result.subject_id ?? request.entity_id),
+    trust_score: trustResponse.trust_score,
+    risk_level: trustResponse.risk_level,
+    confidence: trustResponse.confidence,
+    route: trustResponse.policy.route,
+    reasons: reasonsFromResult(result),
+    receipt: {
+      x402_verified: Boolean(toolOutput?.meta?.payment_receipt_id),
+      network,
+      asset,
+      payment_receipt_id: toolOutput?.meta?.payment_receipt_id ?? null,
+      verifier_reference: receipt?.verifier_reference ?? toolOutput?.meta?.verifier_reference ?? null,
+      settlement_status: receipt?.settlement_status ?? null
+    }
+  };
+}
+
+function buildInfopunksTrustLayerManifest(config) {
+  const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+  return {
+    name: "Infopunks Trust Layer",
+    slug: "infopunks-trust-layer",
+    version: config.adapterVersion,
+    description: "x402-gated trust resolution for agent routing and Agentic.Market discovery.",
+    endpoints: {
+      health: `${origin}/health`,
+      openapi: `${origin}/openapi.json`,
+      resolve_trust: `${origin}/v1/resolve-trust`,
+      mcp: `${origin}/mcp`
+    },
+    payment: {
+      rail: "x402",
+      network: (config.x402SupportedNetworks ?? [])[0] ?? null,
+      asset: (config.x402AcceptedAssets ?? [])[0] ?? null,
+      price_usd: config.x402PriceUsd ?? null,
+      price_atomic: config.x402PricePerUnitAtomic,
+      pay_to_configured: Boolean(config.x402PayTo)
+    },
+    discoverability: {
+      agentic_market_manifest: `${origin}/.well-known/agentic-marketplace.json`,
+      x402_bazaar: `${origin}/.well-known/x402-bazaar.json`
+    }
+  };
+}
+
+function buildOpenApiJson(origin, config) {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Infopunks Trust Layer API",
+      version: config.adapterVersion,
+      description: "Public x402-gated trust resolution surface for Agentic.Market."
+    },
+    servers: [{ url: origin }],
+    paths: {
+      "/health": {
+        get: {
+          summary: "Liveness check",
+          responses: {
+            200: {
+              description: "Service is reachable",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/.well-known/infopunks-trust-layer.json": {
+        get: {
+          summary: "Infopunks Trust Layer discovery metadata",
+          responses: {
+            200: {
+              description: "Discovery metadata",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/openapi.json": {
+        get: {
+          summary: "OpenAPI document",
+          responses: {
+            200: {
+              description: "OpenAPI JSON",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/v1/resolve-trust": {
+        post: {
+          summary: "Resolve trust with x402 payment gating",
+          description: "Returns HTTP 402 with an x402 challenge when payment is missing or invalid.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ResolveTrustRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Trust response",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ResolveTrustResponse" }
+                }
+              }
+            },
+            402: {
+              description: "Payment required",
+              headers: {
+                "PAYMENT-REQUIRED": { schema: { type: "string" } },
+                "x402-required": { schema: { type: "string", const: "true" } },
+                "x402-payment-rail": { schema: { type: "string", const: "x402" } },
+                "x402-accepted-assets": { schema: { type: "string" } },
+                "x402-supported-networks": { schema: { type: "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    components: {
+      schemas: {
+        ResolveTrustRequest: {
+          type: "object",
+          properties: {
+            subject_id: { type: "string" },
+            context: { type: "object", additionalProperties: true },
+            payment: { type: "object", additionalProperties: true }
+          },
+          required: ["subject_id"]
+        },
+        ResolveTrustResponse: {
+          type: "object",
+          properties: {
+            subject_id: { type: "string" },
+            trust_score: { type: "number" },
+            risk_level: { type: "string" },
+            confidence: { type: "number" },
+            route: { type: "string" },
+            reasons: { type: "array", items: { type: "string" } },
+            receipt: {
+              type: "object",
+              properties: {
+                x402_verified: { type: "boolean" },
+                network: { type: "string" },
+                asset: { type: "string" }
+              },
+              required: ["x402_verified", "network", "asset"]
+            }
+          },
+          required: ["subject_id", "trust_score", "risk_level", "confidence", "route", "reasons", "receipt"]
+        }
+      }
     }
   };
 }
 
 function statusFromAdapterErrorCode(code, fallback = 500) {
+  if (code === "REPLAY_DETECTED") {
+    return 409;
+  }
+  if (code === "IDEMPOTENCY_CONFLICT") {
+    return 409;
+  }
+  if (code === "REQUEST_TIMESTAMP_INVALID") {
+    return 400;
+  }
   if (PAYMENT_ERROR_CODES.has(code)) {
     return code === "PAYMENT_REPLAY_DETECTED" ? 409 : 402;
   }
@@ -506,6 +766,49 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
+    if (method === "GET" && url.pathname === "/api/war-room/events") {
+      const events = await mcpServer.warRoomFeed?.listLatest?.(50) ?? [];
+      sendJson(
+        res,
+        200,
+        {
+          events: Array.isArray(events) ? events.slice(0, 50) : []
+        },
+        corsHeaders()
+      );
+      return;
+    }
+
+    if (method === "GET" && (url.pathname === "/war-room" || url.pathname === "/war-room/")) {
+      try {
+        const html = readFileSync(path.join(WAR_ROOM_ROOT, "index.html"), "utf8");
+        sendText(res, 200, html, { ...corsHeaders(), "content-type": "text/html; charset=utf-8" });
+      } catch {
+        sendJson(res, 404, { ok: false, error: "war_room_not_found" }, corsHeaders());
+      }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/war-room/app.js") {
+      try {
+        const js = readFileSync(path.join(WAR_ROOM_ROOT, "app.js"), "utf8");
+        sendText(res, 200, js, { ...corsHeaders(), "content-type": "application/javascript; charset=utf-8" });
+      } catch {
+        sendJson(res, 404, { ok: false, error: "war_room_asset_not_found" }, corsHeaders());
+      }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/war-room/styles.css") {
+      try {
+        const css = readFileSync(path.join(WAR_ROOM_ROOT, "styles.css"), "utf8");
+        sendText(res, 200, css, { ...corsHeaders(), "content-type": "text/css; charset=utf-8" });
+      } catch {
+        sendJson(res, 404, { ok: false, error: "war_room_asset_not_found" }, corsHeaders());
+      }
+      return;
+    }
+
     // Lightweight Render health check: no DB/upstream dependency.
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" }, corsHeaders());
@@ -548,16 +851,21 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    if (method === "POST" && url.pathname === "/trust-score") {
+    if (method === "POST" && (url.pathname === "/trust-score" || url.pathname === "/v1/resolve-trust")) {
+      const endpointPath = url.pathname;
+      const isV1ResolveTrust = endpointPath === "/v1/resolve-trust";
+      const requestId = typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
+        ? req.headers["x-request-id"].trim()
+        : `req_${randomUUID()}`;
       if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
+        sendJson(res, 415, { error: "content_type_must_be_application_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
       let bodyAndRaw;
       try {
         bodyAndRaw = await readJsonBody(req);
       } catch (error) {
-        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, corsHeaders());
+        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
       const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers);
@@ -572,7 +880,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
               message: "entity_id (or subject_id/agent_id) is required."
             }
           },
-          corsHeaders()
+          { ...corsHeaders(), "x-request-id": requestId }
         );
         return;
       }
@@ -591,8 +899,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       };
 
       logger.info({
-        event: "trust_score_request_received",
+        event: "incoming_request",
+        request_id: requestId,
         adapter_trace_id: adapterTraceId,
+        endpoint: endpointPath,
         entity_id: normalized.entity_id,
         ip: req.socket?.remoteAddress ?? "unknown"
       });
@@ -602,51 +912,70 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           toolDef,
           args,
           adapterTraceId,
-          { headers: req.headers, ip: req.socket?.remoteAddress ?? null }
+          { headers: { ...req.headers, "x-request-id": requestId }, ip: req.socket?.remoteAddress ?? null }
         );
         logger.info({
-          event: "trust_score_payment_validated",
+          event: "payment_verified",
+          request_id: requestId,
           adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
           entity_id: normalized.entity_id,
           billed_units: output?.meta?.billed_units ?? 0,
           payment_receipt_id: output?.meta?.payment_receipt_id ?? null
         });
 
-        const trustResponse = toTrustScoreResponse(normalized, output);
+        const trustResponse = isV1ResolveTrust
+          ? toResolveTrustV1Response(normalized, output, config)
+          : toTrustScoreResponse(normalized, output);
+        logger.info({
+          event: "trust_subject_resolved",
+          request_id: requestId,
+          adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
+          subject_id: trustResponse.subject_id ?? trustResponse.entity_id,
+          trust_score: trustResponse.trust_score
+        });
         sendJson(res, 200, trustResponse, {
           ...corsHeaders(),
+          "x-request-id": requestId,
           "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
         });
         logger.info({
-          event: "trust_score_response_sent",
+          event: "final_route_returned",
+          request_id: requestId,
           adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
           entity_id: normalized.entity_id,
           trust_score: trustResponse.trust_score,
-          policy_route: trustResponse.policy.route
+          route: trustResponse.route ?? trustResponse.policy?.route
         });
       } catch (error) {
         const errorEnvelope = toMcpToolError(error, adapterTraceId, toolDef.operation).structuredContent;
         const code = errorEnvelope?.error?.code ?? "UPSTREAM_UNAVAILABLE";
         const statusCode = statusFromAdapterErrorCode(code, error?.status ?? 500);
-        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, "/trust-score") : {};
+        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, endpointPath) : {};
 
         if (PAYMENT_ERROR_CODES.has(code)) {
           logger.info({
-            event: "trust_score_payment_required",
+            event: statusCode === 402 ? "402_challenge_issued" : "payment_failed",
+            request_id: requestId,
             adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
             entity_id: normalized.entity_id,
             code
           });
         } else {
           logger.error({
             event: "trust_score_error",
+            request_id: requestId,
             adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
             entity_id: normalized.entity_id,
             code,
             message: errorEnvelope?.error?.message ?? "trust_score_route_failed"
           });
         }
-        sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders });
+        sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders, "x-request-id": requestId });
       }
       return;
     }
@@ -734,6 +1063,11 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
+    if (method === "GET" && url.pathname === "/.well-known/infopunks-trust-layer.json") {
+      sendJson(res, 200, buildInfopunksTrustLayerManifest(config), corsHeaders());
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/marketplace/readiness") {
       sendJson(res, 200, await marketplaceReadiness(), corsHeaders());
       return;
@@ -756,6 +1090,11 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       } catch {
         sendJson(res, 404, { ok: false, error: "openapi_not_found" }, corsHeaders());
       }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/openapi.json") {
+      sendOpenApiJson(res, config);
       return;
     }
 
@@ -955,6 +1294,7 @@ export const __testOnly = {
   challengeHeaders,
   normalizeTrustScoreRequest,
   toTrustScoreResponse,
+  toResolveTrustV1Response,
   toPolicyRoute,
   toRiskLevel
 };

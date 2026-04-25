@@ -753,7 +753,254 @@ test("entitlement service rejects duplicate proof even when replay strict is dis
         adapterTraceId: "mcp_trc_dup_2",
         entitlement: null
       }),
-    (error) => error?.code === "PAYMENT_REPLAY_DETECTED"
+    (error) => error?.code === "REPLAY_DETECTED"
+  );
+});
+
+test("entitlement service rejects reused nonce with REPLAY_DETECTED", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  await entitlementService.authorizeAndBill({
+    operation: "resolve_trust",
+    payment: { rail: "x402", payer: "payer-replay", units_authorized: 4, nonce: "nonce-replay-1" },
+    fallbackPayer: "payer-replay",
+    spendLimitUnits: 100,
+    adapterTraceId: "mcp_trc_replay_1",
+    entitlement: null
+  });
+
+  await assert.rejects(
+    () =>
+      entitlementService.authorizeAndBill({
+        operation: "resolve_trust",
+        payment: { rail: "x402", payer: "payer-replay", units_authorized: 4, nonce: "nonce-replay-1" },
+        fallbackPayer: "payer-replay",
+        spendLimitUnits: 100,
+        adapterTraceId: "mcp_trc_replay_2",
+        entitlement: null
+      }),
+    (error) => error?.code === "REPLAY_DETECTED"
+  );
+});
+
+test("idempotency returns cached response for same key and payload", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  let handlerCalls = 0;
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async () => {
+        handlerCalls += 1;
+        return {
+          subject_id: "agent_1",
+          score: 55,
+          band: "watch",
+          confidence: 0.7,
+          decision: "allow_with_validation",
+          reason_codes: ["idempotency_test"]
+        };
+      }
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const tool = findTool("resolve_trust");
+  const args = {
+    subject_id: "agent_1",
+    context: { task_type: "market_analysis" },
+    payment: {
+      rail: "x402",
+      payer: "payer-idem",
+      units_authorized: 5,
+      nonce: "nonce-idem-1",
+      idempotency_key: "idem-key-1",
+      request_timestamp: Date.now()
+    }
+  };
+
+  const first = await server.executeTool(tool, args, "mcp_trc_idem_1");
+  const second = await server.executeTool(tool, args, "mcp_trc_idem_2");
+
+  assert.equal(first.result.score, 55);
+  assert.equal(second.result.score, 55);
+  assert.equal(handlerCalls, 1);
+});
+
+test("idempotency rejects same key with different payload", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async ({ args: currentArgs }) => ({
+        subject_id: currentArgs.subject_id,
+        score: currentArgs.context?.risk_level === "high" ? 30 : 65,
+        band: "watch",
+        confidence: 0.6,
+        decision: "allow_with_validation",
+        reason_codes: ["idempotency_conflict_test"]
+      })
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const tool = findTool("resolve_trust");
+  await server.executeTool(tool, {
+    subject_id: "agent_1",
+    context: { task_type: "market_analysis", risk_level: "low" },
+    payment: {
+      rail: "x402",
+      payer: "payer-idem-conflict",
+      units_authorized: 5,
+      nonce: "nonce-idem-2",
+      idempotency_key: "idem-key-2",
+      request_timestamp: Date.now()
+    }
+  }, "mcp_trc_idem_conflict_1");
+
+  await assert.rejects(
+    () => server.executeTool(tool, {
+      subject_id: "agent_1",
+      context: { task_type: "market_analysis", risk_level: "high" },
+      payment: {
+        rail: "x402",
+        payer: "payer-idem-conflict",
+        units_authorized: 5,
+        nonce: "nonce-idem-3",
+        idempotency_key: "idem-key-2",
+        request_timestamp: Date.now()
+      }
+    }, "mcp_trc_idem_conflict_2"),
+    (error) => error?.code === "IDEMPOTENCY_CONFLICT"
+  );
+});
+
+test("stale request timestamp is rejected", async (t) => {
+  const store = makeStore(t);
+  const entitlementService = new EntitlementService({
+    verifier: new X402Verifier({ mode: "stub", logger: null }),
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async () => ({
+        subject_id: "agent_1",
+        score: 40,
+        band: "watch",
+        confidence: 0.5,
+        decision: "allow_with_validation",
+        reason_codes: []
+      })
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const staleTimestamp = Date.now() - 10 * 60 * 1000;
+  await assert.rejects(
+    () => server.executeTool(findTool("resolve_trust"), {
+      subject_id: "agent_1",
+      context: { task_type: "market_analysis" },
+      payment: {
+        rail: "x402",
+        payer: "payer-stale",
+        units_authorized: 5,
+        nonce: "nonce-stale",
+        idempotency_key: "idem-stale",
+        request_timestamp: staleTimestamp
+      }
+    }, "mcp_trc_stale"),
+    (error) => error?.code === "REQUEST_TIMESTAMP_INVALID"
   );
 });
 

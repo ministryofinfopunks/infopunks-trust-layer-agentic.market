@@ -1,10 +1,15 @@
 import path from "node:path";
+import os from "node:os";
 
 const ALLOWED_VERIFIER_MODES = new Set(["facilitator", "strict", "stub"]);
 const ALLOWED_TRANSPORTS = new Set(["http", "stdio"]);
 const ALLOWED_STATE_STORE_DRIVERS = new Set(["sqlite", "postgres"]);
 const ALLOWED_IDENTITY_MAP_DRIVERS = new Set(["file", "postgres"]);
 const ALLOWED_RATE_LIMIT_DRIVERS = new Set(["memory", "postgres"]);
+const BASE_MAINNET_CAIP2 = "eip155:8453";
+const BASE_SEPOLIA_CAIP2 = "eip155:84532";
+const BASE_MAINNET_USDC = "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913";
+const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -12,6 +17,10 @@ function isNonEmptyString(value) {
 
 function isProductionLike(environment) {
   return environment !== "local" && environment !== "test";
+}
+
+function isMainnetProduction(config) {
+  return config.nodeEnv === "production" || config.environment === "production";
 }
 
 function requirePositiveNumber(name, value) {
@@ -39,10 +48,60 @@ function normalizeX402Network(value) {
   if (!normalized) {
     return normalized;
   }
-  if (normalized === "base" || normalized === "base-sepolia") {
-    return "eip155:84532";
+  if (normalized === "base") {
+    return BASE_MAINNET_CAIP2;
+  }
+  if (normalized === "base-sepolia") {
+    return BASE_SEPOLIA_CAIP2;
   }
   return normalized;
+}
+
+function parseBooleanEnv(name, defaultValue = false) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") {
+    return defaultValue;
+  }
+  return String(raw).trim().toLowerCase() === "true";
+}
+
+function containsUnsafeProductionMarker(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized.includes("localhost")
+    || normalized.includes("127.0.0.1")
+    || normalized.includes("::1")
+    || normalized.includes("sepolia")
+    || normalized.includes("mock")
+    || normalized.includes("relaxed");
+}
+
+function usdToUsdcAtomic(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return null;
+  }
+  if (!/^\d+(\.\d{1,6})?$/.test(raw)) {
+    throw new Error("X402_PRICE_USD must be a positive decimal with at most 6 fractional digits.");
+  }
+  const [whole, fraction = ""] = raw.split(".");
+  const atomic = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+  if (atomic <= 0n) {
+    throw new Error("X402_PRICE_USD must be greater than zero.");
+  }
+  return atomic.toString();
+}
+
+function defaultAdapterRuntimeDir(environment) {
+  if (isNonEmptyString(process.env.MCP_ADAPTER_RUNTIME_DIR)) {
+    return process.env.MCP_ADAPTER_RUNTIME_DIR.trim();
+  }
+  if (isNonEmptyString(process.env.DATA_DIR)) {
+    return path.join(process.env.DATA_DIR.trim(), "mcp-adapter");
+  }
+  if (environment === "local" || environment === "test") {
+    return path.resolve(process.cwd(), "services/mcp-adapter/.runtime");
+  }
+  return path.join(os.tmpdir(), "infopunks", "mcp-adapter");
 }
 
 function resolveInternalServiceToken() {
@@ -72,7 +131,9 @@ function resolveInternalServiceToken() {
 
 function validateConfig(config) {
   if (!isNonEmptyString(config.backendBaseUrl)) {
-    throw new Error("INFOPUNKS_CORE_BASE_URL is required (or INFOPUNKS_BACKEND_URL).");
+    throw new Error(
+      "INFOPUNKS_CORE_BASE_URL is required (or INFOPUNKS_BACKEND_URL). In Render/non-local deploys, set this to your core API public URL."
+    );
   }
 
   let backendUrl;
@@ -86,7 +147,9 @@ function validateConfig(config) {
   }
   const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
   if (isProductionLike(config.environment) && loopbackHosts.has(backendUrl.hostname.toLowerCase())) {
-    throw new Error("INFOPUNKS_CORE_BASE_URL cannot point to localhost/loopback in non-local environments.");
+    throw new Error(
+      "INFOPUNKS_CORE_BASE_URL cannot point to localhost/loopback in non-local environments (for example Render)."
+    );
   }
 
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
@@ -112,19 +175,86 @@ function validateConfig(config) {
   requirePositiveNumber("X402_PAYMENT_TIMEOUT_SECONDS", config.x402PaymentTimeoutSeconds);
   requirePositiveNumber("INFOPUNKS_MCP_RATE_LIMIT_PER_MINUTE", config.adapterRateLimitPerMinute);
   requirePositiveNumber("MCP_ADAPTER_MAX_BATCH_REQUESTS", config.maxBatchRequests);
+  requirePositiveNumber("MCP_ADAPTER_PAID_REQUEST_TIMESTAMP_WINDOW_SECONDS", config.paidRequestTimestampWindowSeconds);
+  requirePositiveNumber("MCP_ADAPTER_UPSTREAM_ATTEMPT_TIMEOUT_MS", config.upstreamAttemptTimeoutMs);
+  requireNonNegativeNumber("MCP_ADAPTER_AUTO_BOOTSTRAP_TRUST_SCORE", config.autoBootstrapTrustScore);
   requirePositiveNumber("MCP_ENTITLEMENT_MAX_TTL_SECONDS", config.entitlementMaxTtlSeconds);
   requireNonNegativeNumber("MCP_ENTITLEMENT_CLOCK_SKEW_SECONDS", config.entitlementClockSkewSeconds);
   requirePositiveNumber("X402_SETTLEMENT_WEBHOOK_MAX_SKEW_SECONDS", config.settlementWebhookMaxSkewSeconds);
   requirePositiveNumber("X402_RECONCILIATION_LOCK_TTL_SECONDS", config.reconciliationLockTtlSeconds);
 
   const prodLike = isProductionLike(config.environment);
+  const mainnetProd = isMainnetProduction(config);
+
+  if (mainnetProd && config.nodeEnv !== "production") {
+    throw new Error("NODE_ENV=production is required for production mainnet deployment.");
+  }
 
   if (config.x402VerifierMode === "stub" && !config.x402AllowStubMode && prodLike) {
     throw new Error("X402_VERIFIER_MODE=stub is blocked outside local/test unless X402_ALLOW_STUB_MODE=true.");
   }
 
+  if (mainnetProd) {
+    if (!isNonEmptyString(config.publicBaseUrl)) {
+      throw new Error("PUBLIC_BASE_URL is required for production mainnet deployment.");
+    }
+    let publicUrl;
+    try {
+      publicUrl = new URL(config.publicBaseUrl);
+    } catch {
+      throw new Error("PUBLIC_BASE_URL must be a valid absolute HTTPS URL.");
+    }
+    if (publicUrl.protocol !== "https:") {
+      throw new Error("PUBLIC_BASE_URL must use HTTPS in production.");
+    }
+    if (loopbackHosts.has(publicUrl.hostname.toLowerCase()) || containsUnsafeProductionMarker(config.publicBaseUrl)) {
+      throw new Error("PUBLIC_BASE_URL cannot contain localhost, Sepolia, mock, or relaxed markers in production.");
+    }
+    if (containsUnsafeProductionMarker(config.backendBaseUrl) || containsUnsafeProductionMarker(config.x402VerifierUrl)) {
+      throw new Error("Production URLs cannot contain localhost, Sepolia, mock, or relaxed markers.");
+    }
+    if (String(config.x402NetworkRaw ?? "").trim().toLowerCase() !== "base") {
+      throw new Error("X402_NETWORK=base is required for production mainnet deployment.");
+    }
+    if (String(config.x402AssetRaw ?? "").trim().toUpperCase() !== "USDC") {
+      throw new Error("X402_ASSET=USDC is required for production mainnet deployment.");
+    }
+    if (!isNonEmptyString(config.x402PriceUsd)) {
+      throw new Error("X402_PRICE_USD is required for production mainnet deployment.");
+    }
+    if (!isNonEmptyString(config.x402PayTo)) {
+      throw new Error("X402_PAY_TO is required for production mainnet deployment.");
+    }
+    if (!isNonEmptyString(config.x402FacilitatorUrl)) {
+      throw new Error("X402_FACILITATOR_URL (or X402_VERIFIER_URL) is required for production mainnet deployment.");
+    }
+    if (config.allowTestnet !== false) {
+      throw new Error("ALLOW_TESTNET=false is required for production mainnet deployment.");
+    }
+    if (config.allowRelaxedPayment !== false) {
+      throw new Error("ALLOW_RELAXED_PAYMENT=false is required for production mainnet deployment.");
+    }
+    if (config.x402VerifierMode !== "facilitator") {
+      throw new Error("Production mainnet deployment requires X402_VERIFIER_MODE=facilitator.");
+    }
+    if (config.x402SupportedNetworks.some((network) => network === BASE_SEPOLIA_CAIP2 || String(network).includes("sepolia"))) {
+      throw new Error("Production mainnet deployment cannot include Base Sepolia/testnet networks.");
+    }
+    if (!config.x402SupportedNetworks.includes(BASE_MAINNET_CAIP2)) {
+      throw new Error("Production mainnet deployment must support Base mainnet (eip155:8453).");
+    }
+    if (String(config.x402PaymentAssetAddress).toLowerCase() !== BASE_MAINNET_USDC.toLowerCase()) {
+      throw new Error("Production mainnet deployment requires the Base mainnet USDC asset address.");
+    }
+    if (String(config.x402PaymentAssetAddress).toLowerCase() === BASE_SEPOLIA_USDC.toLowerCase()) {
+      throw new Error("Production mainnet deployment cannot use the Base Sepolia USDC asset address.");
+    }
+  }
+
   if (prodLike && config.internalServiceToken === "dev-infopunks-key") {
-    throw new Error("INFOPUNKS_INTERNAL_SERVICE_TOKEN must be set in non-local environments.");
+    throw new Error(
+      "INFOPUNKS_INTERNAL_SERVICE_TOKEN must be set in non-local environments so the MCP adapter can authenticate to the core API."
+    );
   }
   if (prodLike && !config.internalServiceTokenExplicitlyConfigured) {
     throw new Error(
@@ -202,7 +332,9 @@ function validateConfig(config) {
   }
 
   if (prodLike && config.transportMode === "http" && config.requirePublicUrlInNonLocal && !isNonEmptyString(config.publicUrl)) {
-    throw new Error("MCP_ADAPTER_PUBLIC_URL is required in non-local HTTP mode for marketplace/discovery correctness.");
+    throw new Error(
+      "MCP_ADAPTER_PUBLIC_URL is required in non-local HTTP mode for marketplace discovery correctness. Use your public adapter URL."
+    );
   }
 
   if (
@@ -245,7 +377,9 @@ function validateConfig(config) {
 }
 
 export function loadEnv() {
-  const environment = process.env.INFOPUNKS_ENVIRONMENT ?? "local";
+  const nodeEnv = process.env.NODE_ENV ?? "";
+  const environment = process.env.INFOPUNKS_ENVIRONMENT ?? (nodeEnv === "production" ? "production" : "local");
+  const adapterRuntimeDir = defaultAdapterRuntimeDir(environment);
   const internalServiceTokenExplicitlyConfigured = isNonEmptyString(process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN);
   const defaultBackendBaseUrl = (environment === "local" || environment === "test")
     ? "http://127.0.0.1:4010"
@@ -258,8 +392,27 @@ export function loadEnv() {
     ?.trim()
     .replace(/\/$/, "") ?? "";
   const { token: internalServiceToken, source: internalServiceTokenSource } = resolveInternalServiceToken();
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? process.env.MCP_ADAPTER_PUBLIC_URL ?? null;
+  const x402NetworkRaw = process.env.X402_NETWORK ?? null;
+  const x402AssetRaw = process.env.X402_ASSET ?? null;
+  const x402PriceUsd = process.env.X402_PRICE_USD ?? null;
+  const x402PriceFromUsd = usdToUsdcAtomic(x402PriceUsd);
+  const x402SupportedNetworks = (x402NetworkRaw != null
+    ? [normalizeX402Network(x402NetworkRaw)]
+    : (process.env.X402_SUPPORTED_NETWORKS ?? BASE_SEPOLIA_CAIP2)
+      .split(",")
+      .map((entry) => normalizeX402Network(entry)))
+    .filter(Boolean);
+  const x402AcceptedAssets = (x402AssetRaw != null ? [x402AssetRaw] : (process.env.X402_ACCEPTED_ASSETS ?? "USDC").split(","))
+    .map((entry) => entry.trim().toUpperCase())
+    .filter(Boolean);
+  const x402PaymentAssetAddress = process.env.X402_PAYMENT_ASSET_ADDRESS
+    ?? (x402SupportedNetworks.includes(BASE_MAINNET_CAIP2) ? BASE_MAINNET_USDC : BASE_SEPOLIA_USDC);
+  const x402FacilitatorUrl = process.env.X402_FACILITATOR_URL ?? process.env.X402_VERIFIER_URL ?? null;
 
   const config = {
+    nodeEnv,
+    adapterRuntimeDir,
     transportMode: process.env.MCP_ADAPTER_TRANSPORT ?? "http",
     host: process.env.MCP_ADAPTER_HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? process.env.MCP_ADAPTER_PORT ?? 4021),
@@ -269,28 +422,29 @@ export function loadEnv() {
     internalServiceToken,
     internalServiceTokenSource,
     internalServiceTokenExplicitlyConfigured,
-    publicUrl: process.env.MCP_ADAPTER_PUBLIC_URL ?? null,
+    publicUrl: publicBaseUrl,
+    publicBaseUrl,
     logLevel: process.env.MCP_ADAPTER_LOG_LEVEL ?? "info",
     x402VerifierMode: process.env.X402_VERIFIER_MODE ?? "facilitator",
     x402AllowStubMode: String(process.env.X402_ALLOW_STUB_MODE ?? "false") === "true",
     x402RequiredDefault: String(process.env.X402_REQUIRED_DEFAULT ?? "true") === "true",
-    x402VerifierUrl: process.env.X402_VERIFIER_URL ?? "https://x402.org/facilitator",
+    x402VerifierUrl: x402FacilitatorUrl ?? "https://x402.org/facilitator",
+    x402FacilitatorUrl,
     x402VerifierApiKey: process.env.X402_VERIFIER_API_KEY ?? null,
     x402VerifierTimeoutMs: Number(process.env.X402_VERIFIER_TIMEOUT_MS ?? 5000),
     x402ReplayWindowSeconds: Number(process.env.X402_REPLAY_WINDOW_SECONDS ?? 900),
     x402ReplayStrict: String(process.env.X402_REPLAY_STRICT ?? "true") === "true",
-    x402AcceptedAssets: (process.env.X402_ACCEPTED_ASSETS ?? "USDC")
-      .split(",")
-      .map((entry) => entry.trim().toUpperCase())
-      .filter(Boolean),
-    x402SupportedNetworks: (process.env.X402_SUPPORTED_NETWORKS ?? "eip155:84532")
-      .split(",")
-      .map((entry) => normalizeX402Network(entry))
-      .filter(Boolean),
+    x402NetworkRaw,
+    x402AssetRaw,
+    x402PriceUsd,
+    allowTestnet: parseBooleanEnv("ALLOW_TESTNET", true),
+    allowRelaxedPayment: parseBooleanEnv("ALLOW_RELAXED_PAYMENT", false),
+    x402AcceptedAssets,
+    x402SupportedNetworks,
     x402PaymentScheme: process.env.X402_PAYMENT_SCHEME ?? "exact",
-    x402PaymentAssetAddress: process.env.X402_PAYMENT_ASSET_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    x402PaymentAssetAddress,
     x402PayTo: process.env.X402_PAY_TO ?? "",
-    x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? "10000",
+    x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? x402PriceFromUsd ?? "10000",
     x402PaymentTimeoutSeconds: Number(process.env.X402_PAYMENT_TIMEOUT_SECONDS ?? 300),
     x402Eip712Name: process.env.X402_EIP712_NAME ?? "USDC",
     x402Eip712Version: process.env.X402_EIP712_VERSION ?? "2",
@@ -303,11 +457,14 @@ export function loadEnv() {
     targetResolutionPolicy: process.env.INFOPUNKS_TARGET_RESOLUTION_POLICY ?? "lookup-only",
     identityMapPath:
       process.env.INFOPUNKS_MCP_IDENTITY_MAP_PATH ??
-      path.resolve(process.cwd(), "services/mcp-adapter/.runtime/external_identity_mappings.json"),
+      path.join(adapterRuntimeDir, "external_identity_mappings.json"),
     identityMapDriver: process.env.INFOPUNKS_MCP_IDENTITY_MAP_DRIVER ?? "file",
     stateDbPath:
       process.env.MCP_ADAPTER_STATE_DB_PATH ??
-      path.resolve(process.cwd(), "services/mcp-adapter/.runtime/adapter-state.db"),
+      path.join(adapterRuntimeDir, "adapter-state.db"),
+    warRoomEventsFilePath:
+      process.env.MCP_ADAPTER_WAR_ROOM_EVENTS_FILE ??
+      path.join(adapterRuntimeDir, "war-room-events.jsonl"),
     stateStoreDriver: process.env.MCP_ADAPTER_STATE_STORE_DRIVER ?? "sqlite",
     stateStoreDatabaseUrl: process.env.MCP_ADAPTER_STATE_STORE_DATABASE_URL ?? null,
     x402SharedSecret: process.env.INFOPUNKS_X402_SHARED_SECRET ?? null,
@@ -323,6 +480,11 @@ export function loadEnv() {
     adminEndpointsRequireToken: String(process.env.MCP_ADAPTER_REQUIRE_ADMIN_TOKEN ?? "true") === "true",
     metricsPublic: String(process.env.MCP_ADAPTER_METRICS_PUBLIC ?? "false") === "true",
     maxBatchRequests: Number(process.env.MCP_ADAPTER_MAX_BATCH_REQUESTS ?? 25),
+    paidRequestTimestampWindowSeconds: Number(process.env.MCP_ADAPTER_PAID_REQUEST_TIMESTAMP_WINDOW_SECONDS ?? 120),
+    upstreamAttemptTimeoutMs: Number(process.env.MCP_ADAPTER_UPSTREAM_ATTEMPT_TIMEOUT_MS ?? 2000),
+    autoBootstrapUnknownSubjects: String(process.env.MCP_ADAPTER_AUTO_BOOTSTRAP_UNKNOWN_SUBJECTS ?? "true") === "true",
+    autoBootstrapTrustScore: Number(process.env.MCP_ADAPTER_AUTO_BOOTSTRAP_TRUST_SCORE ?? 20),
+    autoBootstrapTrustTier: process.env.MCP_ADAPTER_AUTO_BOOTSTRAP_TRUST_TIER ?? "unverified",
     rateLimitDriver: process.env.MCP_ADAPTER_RATE_LIMIT_DRIVER ?? "memory",
     rateLimitPostgresUrl: process.env.MCP_ADAPTER_RATE_LIMIT_POSTGRES_URL ?? null,
     requireWebhookAuthInNonLocal: String(process.env.MCP_ADAPTER_REQUIRE_WEBHOOK_AUTH_NON_LOCAL ?? "true") === "true",

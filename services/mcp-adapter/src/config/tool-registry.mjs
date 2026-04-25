@@ -34,13 +34,24 @@ export const TOOL_OUTPUT_SCHEMAS = {
       band: { type: "string" },
       confidence: { type: "number" },
       decision: { type: "string" },
+      trust_state: { type: "string" },
+      trust_vector: { type: "object", additionalProperties: true },
+      trust_policy: { type: "object", additionalProperties: true },
+      trust_evidence: { type: "object", additionalProperties: true },
+      agentic_market: { type: "object", additionalProperties: true },
       reason_codes: { type: "array", items: { type: "string" } },
       recommended_validators: { type: "array", items: { type: "object", additionalProperties: true } },
       policy_actions: { type: "array", items: { type: "string" } },
-      trace_id: { type: "string" }
+      trace_id: { type: "string" },
+      agentId: { type: "string" },
+      trustState: { type: "string" },
+      trustVector: { type: "object", additionalProperties: true },
+      policy: { type: "object", additionalProperties: true },
+      evidence: { type: "object", additionalProperties: true },
+      agenticMarket: { type: "object", additionalProperties: true }
     },
     required: ["subject_id", "score", "decision", "confidence"],
-    additionalProperties: false
+    additionalProperties: true
   },
   select_validators: {
     type: "object",

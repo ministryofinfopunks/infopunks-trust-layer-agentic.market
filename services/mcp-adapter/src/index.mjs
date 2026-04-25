@@ -16,6 +16,7 @@ import { createHttpTransport } from "./transport/http-server.mjs";
 import { createAdapterStateStore } from "./storage/factory.mjs";
 import { EntitlementTokenValidator } from "./security/entitlement-token.mjs";
 import { createIdentityMappingStore } from "./identity/mapping-store.mjs";
+import { createWarRoomFeed } from "./observability/war-room-feed.mjs";
 
 import { getPassportTool } from "./tools/get-passport.mjs";
 import { resolveTrustTool } from "./tools/resolve-trust.mjs";
@@ -44,8 +45,8 @@ const apiClient = new InfopunksApiClient({
 });
 const identityMappingStore = await createIdentityMappingStore(config);
 const mapper = new PassportMapper({ mapPath: config.identityMapPath, environment: config.environment, store: identityMappingStore });
-const subjectResolution = new SubjectResolutionService({ apiClient, mapper, config });
 const store = await createAdapterStateStore(config);
+const subjectResolution = new SubjectResolutionService({ apiClient, mapper, config, store });
 const verifier = new X402Verifier({
   mode: config.x402VerifierMode,
   verifierUrl: config.x402VerifierUrl,
@@ -96,6 +97,7 @@ const server = new McpServer({
   store,
   reconciliationService
 });
+server.warRoomFeed = createWarRoomFeed({ store, config, logger });
 
 function startStdioTransport() {
   function writeMessage(message) {

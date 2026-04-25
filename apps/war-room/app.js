@@ -1,7 +1,9 @@
 const apiKey = localStorage.getItem("INFOPUNKS_API_KEY") || "dev-infopunks-key";
 const reconnectBaseMs = 1500;
+const paidEventsPollMs = 4000;
 let reconnectAttempt = 0;
 let activeStream = null;
+let paidEventPollHandle = null;
 
 const nodes = {
   apiStatus: document.querySelector("#api-status"),
@@ -71,15 +73,47 @@ async function fetchJson(url) {
 }
 
 async function loadState() {
+  let hasPaidEvents = false;
+  try {
+    const paid = await fetchJson("/api/war-room/events");
+    const paidEvents = Array.isArray(paid?.events) ? paid.events : [];
+    if (paidEvents.length > 0) {
+      hasPaidEvents = true;
+      renderList(
+        nodes.eventFeed,
+        paidEvents.map((event) =>
+          createItem(
+            `${event.subject_id ?? "unknown_subject"} · ${event.status ?? "unknown"}`,
+            [
+              `payer ${event.payer ?? "unknown"}`,
+              `score ${event.trust_score ?? "n/a"} (${event.trust_tier ?? "n/a"})`,
+              `mode ${event.mode ?? "n/a"} · confidence ${event.confidence ?? "n/a"}`,
+              `receipt ${event.receipt_id ?? "n/a"}`,
+              event.reason ? `reason ${event.reason}` : null,
+              event.error_code ? `error ${event.error_code}` : null
+            ].filter(Boolean).join(" · "),
+            event.mode ?? event.status ?? ""
+          )
+        ),
+        "No trust calls yet."
+      );
+      nodes.lastEvent.textContent = `${paidEvents[0].event_type ?? "paid_call"} · ${paidEvents[0].subject_id ?? "unknown_subject"}`;
+    }
+  } catch {
+    // Keep loading the existing war room state.
+  }
+
   try {
     const state = await fetchJson("/v1/war-room/state");
-    renderList(
-      nodes.eventFeed,
-      state.live_trust_event_feed.map((event) =>
-        createItem(`${event.event_type ?? event.type} · ${event.subject_id ?? event.subject}`, JSON.stringify(event.data ?? {}), event.severity ?? event.data?.severity ?? "")
-      ),
-      "No trust events yet."
-    );
+    if (!hasPaidEvents) {
+      renderList(
+        nodes.eventFeed,
+        state.live_trust_event_feed.map((event) =>
+          createItem(`${event.event_type ?? event.type} · ${event.subject_id ?? event.subject}`, JSON.stringify(event.data ?? {}), event.severity ?? event.data?.severity ?? "")
+        ),
+        "No trust calls yet."
+      );
+    }
     renderList(
       nodes.movers,
       state.top_score_movers.map((entry) =>
@@ -241,3 +275,11 @@ nodes.traceForm.addEventListener("submit", async (event) => {
 
 await loadState();
 connectEvents();
+if (paidEventPollHandle) {
+  window.clearInterval(paidEventPollHandle);
+}
+paidEventPollHandle = window.setInterval(() => {
+  loadState().catch(() => {
+    // Keep current UI state on transient polling failures.
+  });
+}, paidEventsPollMs);

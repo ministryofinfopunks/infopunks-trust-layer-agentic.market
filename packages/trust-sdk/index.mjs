@@ -564,3 +564,10 @@ export class Infopunks {
     };
   }
 }
+
+export {
+  createAgenticTrustClient,
+  resolveTrust,
+  requireTrustedExecutor,
+  UnsafeExecutorError
+} from "./agentic-hook.mjs";

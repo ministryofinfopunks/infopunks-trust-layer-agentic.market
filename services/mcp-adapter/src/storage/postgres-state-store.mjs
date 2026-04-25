@@ -108,6 +108,24 @@ export class PostgresAdapterStateStore {
       CREATE INDEX IF NOT EXISTS idx_request_trace ON adapter_request_log(adapter_trace_id);
       CREATE INDEX IF NOT EXISTS idx_request_tool_time ON adapter_request_log(tool_name, created_at);
 
+      CREATE TABLE IF NOT EXISTS billing_ledger (
+        ledger_id TEXT PRIMARY KEY,
+        adapter_trace_id TEXT,
+        request_id TEXT,
+        tool_name TEXT NOT NULL,
+        payer TEXT,
+        subject_id TEXT,
+        billed_units INTEGER NOT NULL,
+        receipt_id TEXT,
+        network TEXT,
+        asset TEXT,
+        price_atomic TEXT,
+        status TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_billing_ledger_receipt ON billing_ledger(receipt_id);
+      CREATE INDEX IF NOT EXISTS idx_billing_ledger_created ON billing_ledger(created_at);
+
       CREATE TABLE IF NOT EXISTS entitlement_sessions (
         session_id TEXT PRIMARY KEY,
         token_jti TEXT UNIQUE,
@@ -130,6 +148,47 @@ export class PostgresAdapterStateStore {
         expires_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS paid_idempotency (
+        key TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        status_code INTEGER,
+        response_json TEXT,
+        error_code TEXT,
+        receipt_id TEXT,
+        payer TEXT,
+        subject_id TEXT,
+        nonce TEXT,
+        mode TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_paid_idempotency_created ON paid_idempotency(created_at);
+
+      CREATE TABLE IF NOT EXISTS trust_cache (
+        subject_id TEXT PRIMARY KEY,
+        response_json TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_trust_cache_updated_at ON trust_cache(updated_at);
+
+      CREATE TABLE IF NOT EXISTS war_room_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL,
+        payer TEXT,
+        subject_id TEXT,
+        trust_score DOUBLE PRECISION,
+        trust_tier TEXT,
+        mode TEXT,
+        confidence DOUBLE PRECISION,
+        status TEXT,
+        receipt_id TEXT,
+        amount DOUBLE PRECISION,
+        error_code TEXT,
+        reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
   }
 
@@ -150,6 +209,198 @@ export class PostgresAdapterStateStore {
       return `session_payer:${sessionId}:${payer}`;
     }
     return null;
+  }
+
+  async getIdempotencyRecord(key) {
+    if (!key) {
+      return null;
+    }
+    const result = await this.pool.query(
+      `
+        SELECT key, request_hash, status_code, response_json, error_code, receipt_id, payer, subject_id,
+               nonce, mode, created_at, updated_at
+        FROM paid_idempotency
+        WHERE key = $1
+        LIMIT 1
+      `,
+      [key]
+    );
+    const row = result.rows[0];
+    return row ? { ...row, response: fromJson(row.response_json, null) } : null;
+  }
+
+  async reserveIdempotencyKey({
+    key,
+    requestHash,
+    payer,
+    subjectId,
+    nonce,
+    mode
+  }) {
+    const now = nowIso();
+    try {
+      await this.pool.query(
+        `
+          INSERT INTO paid_idempotency (
+            key, request_hash, status_code, response_json, error_code, receipt_id, payer, subject_id,
+            nonce, mode, created_at, updated_at
+          ) VALUES ($1, $2, NULL, NULL, NULL, NULL, $3, $4, $5, $6, $7, $7)
+        `,
+        [key, requestHash, payer ?? null, subjectId ?? null, nonce ?? null, mode ?? null, now]
+      );
+      return {
+        ok: true,
+        created: true,
+        record: await this.getIdempotencyRecord(key)
+      };
+    } catch (error) {
+      if (String(error?.code ?? "") !== "23505") {
+        throw error;
+      }
+      const existing = await this.getIdempotencyRecord(key);
+      if (!existing) {
+        return {
+          ok: false,
+          reason: "IDEMPOTENCY_CONFLICT",
+          details: { key, message: "idempotency_lookup_failed_after_conflict" }
+        };
+      }
+      if (existing.request_hash !== requestHash) {
+        return {
+          ok: false,
+          reason: "IDEMPOTENCY_CONFLICT",
+          details: {
+            key,
+            existing_request_hash: existing.request_hash,
+            request_hash: requestHash
+          }
+        };
+      }
+      return {
+        ok: true,
+        created: false,
+        record: existing
+      };
+    }
+  }
+
+  async finalizeIdempotencyKey({
+    key,
+    statusCode,
+    response,
+    errorCode,
+    receiptId
+  }) {
+    await this.pool.query(
+      `
+        UPDATE paid_idempotency
+        SET status_code = $1, response_json = $2, error_code = $3, receipt_id = $4, updated_at = NOW()
+        WHERE key = $5
+      `,
+      [statusCode ?? null, toJson(response ?? null), errorCode ?? null, receiptId ?? null, key]
+    );
+    return this.getIdempotencyRecord(key);
+  }
+
+  async getCachedTrustForSubject(subjectId) {
+    if (!subjectId) {
+      return null;
+    }
+    const result = await this.pool.query(
+      `
+        SELECT subject_id, response_json, updated_at
+        FROM trust_cache
+        WHERE subject_id = $1
+        LIMIT 1
+      `,
+      [subjectId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      subject_id: row.subject_id,
+      response: fromJson(row.response_json, null),
+      updated_at: row.updated_at
+    };
+  }
+
+  async setCachedTrustForSubject(subjectId, response) {
+    if (!subjectId || !response || typeof response !== "object") {
+      return;
+    }
+    await this.pool.query(
+      `
+        INSERT INTO trust_cache (subject_id, response_json, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT(subject_id) DO UPDATE SET
+          response_json = EXCLUDED.response_json,
+          updated_at = NOW()
+      `,
+      [subjectId, toJson(response)]
+    );
+  }
+
+  async recordWarRoomEvent(event = {}) {
+    const normalized = {
+      event_id: event.event_id ?? `wre_${randomUUID()}`,
+      event_type: event.event_type ?? "paid_call.unknown",
+      timestamp: event.timestamp ?? nowIso(),
+      payer: event.payer ?? null,
+      subject_id: event.subject_id ?? null,
+      trust_score: Number.isFinite(Number(event.trust_score)) ? Number(event.trust_score) : null,
+      trust_tier: event.trust_tier ?? null,
+      mode: event.mode ?? null,
+      confidence: Number.isFinite(Number(event.confidence)) ? Number(event.confidence) : null,
+      status: event.status ?? null,
+      receipt_id: event.receipt_id ?? null,
+      amount: Number.isFinite(Number(event.amount)) ? Number(event.amount) : null,
+      error_code: event.error_code ?? null,
+      reason: event.reason ?? null
+    };
+
+    await this.pool.query(
+      `
+        INSERT INTO war_room_events (
+          event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
+          mode, confidence, status, receipt_id, amount, error_code, reason
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `,
+      [
+        normalized.event_id,
+        normalized.event_type,
+        normalized.timestamp,
+        normalized.payer,
+        normalized.subject_id,
+        normalized.trust_score,
+        normalized.trust_tier,
+        normalized.mode,
+        normalized.confidence,
+        normalized.status,
+        normalized.receipt_id,
+        normalized.amount,
+        normalized.error_code,
+        normalized.reason
+      ]
+    );
+
+    return normalized;
+  }
+
+  async listWarRoomEvents(limit = 50) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const result = await this.pool.query(
+      `
+        SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
+               mode, confidence, status, receipt_id, amount, error_code, reason
+        FROM war_room_events
+        ORDER BY timestamp DESC
+        LIMIT $1
+      `,
+      [safeLimit]
+    );
+    return result.rows;
   }
 
   async spendState(payer) {
@@ -592,6 +843,44 @@ export class PostgresAdapterStateStore {
         receiptId ?? null,
         internalTraceId ?? null,
         toJson(details),
+        nowIso()
+      ]
+    );
+  }
+
+  async recordBillingLedgerEntry({
+    adapterTraceId,
+    requestId = null,
+    toolName,
+    payer,
+    subjectId,
+    billedUnits,
+    receiptId,
+    network,
+    asset,
+    priceAtomic,
+    status = "paid"
+  }) {
+    await this.pool.query(
+      `
+        INSERT INTO billing_ledger (
+          ledger_id, adapter_trace_id, request_id, tool_name, payer, subject_id,
+          billed_units, receipt_id, network, asset, price_atomic, status, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      `,
+      [
+        `bill_${randomUUID()}`,
+        adapterTraceId ?? null,
+        requestId ?? null,
+        toolName,
+        payer ?? null,
+        subjectId ?? null,
+        billedUnits ?? 0,
+        receiptId ?? null,
+        network ?? null,
+        asset ?? null,
+        priceAtomic != null ? String(priceAtomic) : null,
+        status,
         nowIso()
       ]
     );
