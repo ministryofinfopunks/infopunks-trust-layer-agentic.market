@@ -162,7 +162,7 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
   });
 
   async function postTrustScore(body) {
-    const res = await fetch(`http://127.0.0.1:${port}/trust-score`, {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)

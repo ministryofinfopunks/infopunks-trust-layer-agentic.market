@@ -167,7 +167,7 @@ async function startHarness(t, {
   });
 
   async function postTrustScore(body, headers = {}) {
-    const res = await fetch(`http://127.0.0.1:${port}/trust-score`, {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -197,8 +197,9 @@ test("hardening sim: valid paid trust call", async (t) => {
   });
 
   assert.equal(response.status, 200);
-  assert.equal(response.payload.mode, "verified");
+  assert.equal(response.payload.route, "allow");
   assert.ok(response.payload.confidence >= 0.8);
+  assert.equal(response.payload.receipt.x402_verified, true);
 
   const successEvent = events.find((entry) => entry.event === "paid_call_event" && entry.status === "verified");
   assert.ok(successEvent);
@@ -287,9 +288,9 @@ test("hardening sim: delayed upstream degrades with fallback", async (t) => {
   const elapsed = Date.now() - started;
 
   assert.equal(response.status, 200);
-  assert.equal(response.payload.mode, "degraded");
+  assert.equal(response.payload.route, "degrade");
   assert.ok(response.payload.confidence < 0.8);
-  assert.ok(String(response.payload.policy?.reason ?? "").includes("UPSTREAM_UNAVAILABLE"));
+  assert.ok(response.payload.reasons.includes("UPSTREAM_UNAVAILABLE"));
   assert.ok(attempts >= 2);
   assert.ok(elapsed < 3000);
 });
@@ -326,11 +327,10 @@ test("hardening sim: idempotency retry returns original and avoids duplicate bil
 
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
-  assert.equal(second.payload.entity_id, first.payload.entity_id);
+  assert.equal(second.payload.subject_id, first.payload.subject_id);
   assert.equal(second.payload.trust_score, first.payload.trust_score);
-  assert.equal(second.payload.mode, first.payload.mode);
-  assert.equal(second.payload.policy?.route, first.payload.policy?.route);
-  assert.equal(second.payload.policy?.reason, first.payload.policy?.reason);
+  assert.equal(second.payload.route, first.payload.route);
+  assert.deepEqual(second.payload.reasons, first.payload.reasons);
   assert.equal(handlerCalls, 1);
 
   const spend = await store.spendState("payer_idem");

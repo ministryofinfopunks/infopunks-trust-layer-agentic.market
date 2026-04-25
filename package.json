@@ -1,7 +1,7 @@
 {
   "name": "infopunks-trust-layer",
   "version": "1.0.0",
-  "description": "Infrastructure-grade trust layer for agent routing.",
+  "description": "x402-gated trust resolution service for Agentic.Market.",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.9.0",
@@ -9,35 +9,18 @@
     "node": "22.x"
   },
   "workspaces": [
-    "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev": "node scripts/local-up.mjs --fresh",
-    "start": "node apps/api/server.mjs",
-    "site:dev": "npm run dev -w apps/site",
-    "site:build": "npm run build -w apps/site",
-    "site:start": "npm run start -w apps/site",
-    "local:up": "node scripts/local-up.mjs",
-    "clean": "node scripts/clean.mjs",
-    "build": "npm run site:build && npm run contract:generate -- --check",
-    "contract:generate": "node scripts/generate-openapi-artifacts.mjs",
-    "sim:demo": "node apps/simulator/run.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "dev": "node services/mcp-adapter/src/index.mjs",
+    "build": "node scripts/generate-openapi-artifacts.mjs --check && node --check services/mcp-adapter/src/index.mjs && node --check services/mcp-adapter/src/transport/http-server.mjs && node --check scripts/x402-smoke.mjs && node --check scripts/readiness.mjs",
+    "start": "node services/mcp-adapter/src/index.mjs",
     "lint": "node scripts/lint.mjs",
     "typecheck": "node scripts/typecheck.mjs",
-    "speccheck": "node scripts/generate-openapi-artifacts.mjs --check && node scripts/speccheck.mjs",
-    "ci": "npm run lint && npm run typecheck && npm test && npm run speccheck",
-    "seed": "node scripts/seed/seed-demo.mjs",
-    "seed:war-room-events": "node scripts/seed/seed-war-room-events.mjs",
-    "bootstrap:subject": "node scripts/bootstrap/register-subject.mjs",
-    "hardening:sim": "node --test tests/mcp-adapter-hardening-sim.test.mjs",
-    "demo:agentic-hook": "node examples/agentic-first-hook.js",
-    "proof:paid-call": "node scripts/proof/paid-call.mjs",
-    "proof:paid-sequence": "node scripts/proof/paid-sequence.mjs",
-    "smoke:mainnet": "node scripts/mainnet-smoke.mjs",
-    "replay": "node scripts/replay/replay-trace.mjs",
-    "mcp:adapter": "node services/mcp-adapter/src/index.mjs"
+    "test": "node --test tests/mcp-adapter-http-health.test.mjs tests/mcp-adapter-listing-readiness.test.mjs tests/mcp-adapter-platform-hardening.test.mjs tests/mcp-adapter-x402.test.mjs tests/mcp-adapter-hardening-sim.test.mjs tests/mcp-adapter-war-room-events.test.mjs",
+    "smoke:x402:testnet": "SMOKE_X402_NETWORK=testnet node scripts/x402-smoke.mjs",
+    "smoke:x402:mainnet": "SMOKE_X402_NETWORK=mainnet node scripts/x402-smoke.mjs",
+    "readiness": "node scripts/readiness.mjs"
   },
   "devDependencies": {
     "yaml": "^2.8.1"

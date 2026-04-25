@@ -77,14 +77,11 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.deepEqual(body, { status: "ok" });
     assert.equal(upstreamHealthCalls, 0);
 
-    const readiness = await fetch(`http://127.0.0.1:${port}/healthz`);
-    assert.equal(readiness.status, 503);
-    assert.ok(upstreamHealthCalls >= 1);
-
     const trustLayer = await fetch(`http://127.0.0.1:${port}/.well-known/infopunks-trust-layer.json`);
     assert.equal(trustLayer.status, 200);
     const trustLayerBody = await trustLayer.json();
     assert.equal(trustLayerBody.endpoints.resolve_trust.endsWith("/v1/resolve-trust"), true);
+    assert.equal(upstreamHealthCalls, 0);
 
     const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
     assert.equal(openapi.status, 200);

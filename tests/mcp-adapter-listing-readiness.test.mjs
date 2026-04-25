@@ -66,7 +66,7 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
-  assert.match(headers["x402-discovery"], /\/\.well-known\/x402-bazaar\.json$/);
+  assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
 test("challengeHeaders normalize base network alias to Base mainnet CAIP-2", () => {

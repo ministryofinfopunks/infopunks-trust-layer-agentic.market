@@ -5,7 +5,7 @@ services:
     plan: starter
     rootDir: .
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node apps/api/server.mjs
     healthCheckPath: /healthz
     envVars:
       - key: INFOPUNKS_ENVIRONMENT
@@ -25,7 +25,7 @@ services:
     plan: starter
     rootDir: .
     buildCommand: npm install
-    startCommand: npm run mcp:adapter
+    startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: INFOPUNKS_ENVIRONMENT

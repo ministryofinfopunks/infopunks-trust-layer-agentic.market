@@ -1,6 +1,6 @@
 # Agentic.Market Listing Notes
 
-Infopunks Trust Layer exposes a single paid trust-resolution endpoint for Agentic.Market clients. The existing MCP and legacy `/trust-score` paths remain available; the listing-facing HTTP path is `/v1/resolve-trust`.
+Infopunks Trust Layer exposes one paid trust primitive for Agentic.Market: `POST /v1/resolve-trust`.
 
 ## Public Endpoints
 
@@ -18,6 +18,7 @@ Production Base mainnet config must be explicit:
 ```bash
 NODE_ENV=production
 PUBLIC_BASE_URL=https://<public-adapter-host>
+MCP_ADAPTER_PUBLIC_URL=https://<public-adapter-host>
 X402_NETWORK=base
 X402_ASSET=USDC
 X402_PRICE_USD=0.01
@@ -28,9 +29,9 @@ ALLOW_TESTNET=false
 ALLOW_RELAXED_PAYMENT=false
 ```
 
-The Base mainnet USDC asset is `0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913`. Base Sepolia remains supported for proof/testing only and must not be present in production mainnet config.
+The Base mainnet USDC asset is `0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913`. Base Sepolia is only for testnet smoke/proof runs and must not appear in production config or manifests.
 
-## Example Request
+## Example Unpaid Request
 
 ```bash
 curl -i -X POST "$PUBLIC_BASE_URL/v1/resolve-trust" \
@@ -70,28 +71,38 @@ Unpaid production calls return `402` with an x402 challenge in the `PAYMENT-REQU
 
 ## Integration Notes
 
-- Use `/v1/resolve-trust` for Agentic.Market HTTP integrations.
-- Use `/mcp` when the client is an MCP JSON-RPC tool caller.
+- Use `/v1/resolve-trust`; no other public paid endpoint is required for launch.
 - Preserve the exact `PAYMENT-REQUIRED` challenge values when constructing the paid retry.
 - Send the paid retry with either an `X-PAYMENT` header containing the base64 x402 payload or a `payment` object containing `paymentPayload` and `paymentRequirements`.
 - Include `x-request-id` for reconciliation-friendly logs. The server returns the same request ID header.
-- Successful paid calls write a payment receipt, request log, War Room event, and billing ledger entry.
+- Successful paid calls write a payment receipt, request log, War Room event if enabled, and billing ledger entry.
 
-## Mainnet Smoke Test
+## Smoke Tests
+
+Testnet:
+
+```bash
+PUBLIC_BASE_URL=https://<testnet-adapter-host> \
+TESTNET_X402_PAYMENT_JSON='<testnet payment json>' \
+npm run smoke:x402:testnet
+```
+
+Mainnet:
 
 ```bash
 PUBLIC_BASE_URL=https://<public-adapter-host> \
-MAINNET_X402_PAYMENT_JSON='<wallet/facilitator-produced payment json>' \
-npm run smoke:mainnet
+MAINNET_X402_PAYMENT_JSON='<mainnet payment json>' \
+npm run smoke:x402:mainnet
 ```
 
-Run three paid calls with distinct payment payloads/nonces:
+Run three paid mainnet calls with distinct payment payloads/nonces:
 
 ```bash
 for i in 1 2 3; do
   PUBLIC_BASE_URL=https://<public-adapter-host> \
   SMOKE_REQUEST_ID="mainnet-paid-${i}" \
   MAINNET_X402_PAYMENT_JSON="$(cat artifacts/mainnet-payment-${i}.json)" \
-  npm run smoke:mainnet
+  SMOKE_REQUIRED=true \
+  npm run smoke:x402:mainnet
 done
 ```

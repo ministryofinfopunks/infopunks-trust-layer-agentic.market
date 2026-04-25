@@ -3,88 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Infopunks War Room</title>
+    <title>Infopunks Trust Layer War Room</title>
     <link rel="stylesheet" href="/war-room/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <div>
-          <p class="eyebrow">Infopunks Trust Layer V1</p>
-          <h1>War Room</h1>
-          <p class="lede">Live trust movement, validator routing, quarantines, and replay-ready traces.</p>
+          <p class="eyebrow">Infopunks Trust Layer</p>
+          <h1>Paid-call proof feed</h1>
+          <p class="lede">Minimal proof-of-life logs for x402 trust-resolution calls.</p>
         </div>
-        <div class="hero-meta">
-          <div class="meta-card">
-            <span>API</span>
-            <strong id="api-status">Connecting</strong>
-          </div>
-          <div class="meta-card">
-            <span>Last Event</span>
-            <strong id="last-event">Waiting</strong>
-          </div>
+        <div class="status-grid">
+          <div><span>API</span><strong id="api-status">Connecting</strong></div>
+          <div><span>Last Event</span><strong id="last-event">Waiting</strong></div>
         </div>
       </section>
-
-      <section class="grid">
+      <section class="grid one-column">
         <article class="panel">
-          <div class="panel-head">
-            <h2>Live Trust Event Feed</h2>
-          </div>
+          <h2>Recent Paid Trust Events</h2>
           <div id="event-feed" class="list tall"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Top Score Movers</h2>
-          </div>
-          <div id="movers" class="list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Current Quarantines</h2>
-          </div>
-          <div id="quarantines" class="list"></div>
-        </article>
-
-        <article class="panel wide">
-          <div class="panel-head">
-            <h2>Validator Routing Stream</h2>
-          </div>
-          <div id="routing" class="list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Trust Graph Cluster Map</h2>
-          </div>
-          <div id="clusters" class="list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Recent Alerts</h2>
-          </div>
-          <div id="alerts" class="list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Replay Activity</h2>
-          </div>
-          <div id="replays" class="list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Trace Replay</h2>
-          </div>
-          <form id="trace-form" class="trace-form">
-            <input id="trace-id" name="trace-id" placeholder="Paste trace_id" />
-            <button type="submit">Replay</button>
-          </form>
-          <pre id="trace-output" class="trace-output">Awaiting trace lookup.</pre>
         </article>
       </section>
     </main>

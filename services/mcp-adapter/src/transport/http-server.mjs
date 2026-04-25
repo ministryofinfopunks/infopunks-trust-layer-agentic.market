@@ -3,9 +3,6 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAiPluginManifest } from "../config/ai-plugin.mjs";
-import { buildBazaarDiscoveryDocument } from "../config/bazaar-discovery.mjs";
-import { buildMarketplaceManifest } from "../config/marketplace-manifest.mjs";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
@@ -13,7 +10,6 @@ import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ADAPTER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OPENAPI_FILE = path.join(ADAPTER_ROOT, "..", "openapi.yaml");
 const WAR_ROOM_ROOT = path.join(ADAPTER_ROOT, "..", "..", "..", "apps", "war-room");
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
@@ -208,10 +204,10 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   };
 }
 
-function challengeHeaders(config, toolDef, resourcePath = "/trust-score") {
+function challengeHeaders(config, toolDef, resourcePath = "/v1/resolve-trust") {
   const units = toolDef?.pricing?.units ?? 0;
   const rail = "x402";
-  const discovery = `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`;
+  const discovery = `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/infopunks-trust-layer.json`;
   const paymentRequired = paymentRequiredEnvelope(config, toolDef, resourcePath);
   return {
     "x402-required": "true",
@@ -530,8 +526,7 @@ function buildInfopunksTrustLayerManifest(config) {
     endpoints: {
       health: `${origin}/health`,
       openapi: `${origin}/openapi.json`,
-      resolve_trust: `${origin}/v1/resolve-trust`,
-      mcp: `${origin}/mcp`
+      resolve_trust: `${origin}/v1/resolve-trust`
     },
     payment: {
       rail: "x402",
@@ -542,8 +537,7 @@ function buildInfopunksTrustLayerManifest(config) {
       pay_to_configured: Boolean(config.x402PayTo)
     },
     discoverability: {
-      agentic_market_manifest: `${origin}/.well-known/agentic-marketplace.json`,
-      x402_bazaar: `${origin}/.well-known/x402-bazaar.json`
+      agentic_market_listing: `${origin}/.well-known/infopunks-trust-layer.json`
     }
   };
 }
@@ -698,63 +692,6 @@ function statusFromAdapterErrorCode(code, fallback = 500) {
 }
 
 export function createHttpTransport({ config, mcpServer, logger, metrics }) {
-  async function executeRestTool({ toolName, args, req, res }) {
-    const toolDef = findTool(toolName);
-    if (!toolDef) {
-      sendJson(res, 404, { error: { code: "INVALID_INPUT", message: `Unknown tool ${toolName}.` } }, corsHeaders());
-      return;
-    }
-
-    const adapterTraceId = createAdapterTraceId();
-    try {
-      const output = await mcpServer.executeTool(
-        toolDef,
-        args,
-        adapterTraceId,
-        { headers: req.headers, ip: req.socket?.remoteAddress ?? null }
-      );
-      sendJson(res, 200, output, {
-        ...corsHeaders(),
-        "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-      });
-    } catch (error) {
-      const errorEnvelope = toMcpToolError(error, adapterTraceId, toolDef.operation).structuredContent;
-      const code = errorEnvelope?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-      const statusCode = statusFromAdapterErrorCode(code, error?.status ?? 500);
-      const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef) : {};
-      sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders });
-    }
-  }
-
-  async function marketplaceReadiness() {
-    const verifier = await mcpServer.entitlementService?.verifier?.readiness?.();
-    const discoveryDoc = buildBazaarDiscoveryDocument(config);
-    const toolCount = Array.isArray(discoveryDoc?.tools) ? discoveryDoc.tools.length : 0;
-    const readiness = {
-      public_url_configured: Boolean(config.publicUrl),
-      facilitator_mode_enabled: config.x402VerifierMode === "facilitator",
-      verifier_connected: Boolean(verifier?.connected),
-      settlement_webhook_configured: Boolean(config.settlementWebhookHmacSecret || config.settlementWebhookSecret),
-      admin_security_configured: Boolean(!config.adminEndpointsRequireToken || config.adminToken),
-      entitlement_policy_ready: Boolean(
-        config.entitlementTokenRequired
-        && config.entitlementIssuer
-        && config.entitlementAudience
-      ),
-      discovery_metadata_valid: toolCount > 0
-    };
-    return {
-      signals: readiness,
-      details: {
-        verifier_mode: config.x402VerifierMode,
-        verifier_reason: verifier?.reason ?? "unknown",
-        public_url: config.publicUrl ?? null,
-        discovery_tool_count: toolCount
-      },
-      ready_for_listing: Object.values(readiness).every(Boolean)
-    };
-  }
-
   const server = http.createServer(async (req, res) => {
     const started = Date.now();
     const method = String(req.method ?? "GET").toUpperCase();
@@ -815,45 +752,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    if (method === "GET" && url.pathname === "/healthz") {
-      const healthy = await mcpServer.apiClient.health();
-      const listing = await marketplaceReadiness();
-      sendJson(
-        res,
-        healthy ? (listing.ready_for_listing ? 200 : 206) : 503,
-        {
-          ok: healthy,
-          service: config.adapterName,
-          version: config.adapterVersion,
-          transport: "http",
-          marketplace_readiness: listing
-        },
-        corsHeaders()
-      );
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/") {
-      sendJson(
-        res,
-        200,
-        {
-          ok: true,
-          service: config.adapterName,
-          version: config.adapterVersion,
-          mcp_endpoint: "/mcp",
-          public_url: config.publicUrl ?? null,
-          discovery_metadata: "/.well-known/x402-bazaar.json",
-          zero_api_keys_externally: true
-        },
-        corsHeaders()
-      );
-      return;
-    }
-
-    if (method === "POST" && (url.pathname === "/trust-score" || url.pathname === "/v1/resolve-trust")) {
+    if (method === "POST" && url.pathname === "/v1/resolve-trust") {
       const endpointPath = url.pathname;
-      const isV1ResolveTrust = endpointPath === "/v1/resolve-trust";
       const requestId = typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
         ? req.headers["x-request-id"].trim()
         : `req_${randomUUID()}`;
@@ -924,9 +824,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           payment_receipt_id: output?.meta?.payment_receipt_id ?? null
         });
 
-        const trustResponse = isV1ResolveTrust
-          ? toResolveTrustV1Response(normalized, output, config)
-          : toTrustScoreResponse(normalized, output);
+        const trustResponse = toResolveTrustV1Response(normalized, output, config);
         logger.info({
           event: "trust_subject_resolved",
           request_id: requestId,
@@ -938,7 +836,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         sendJson(res, 200, trustResponse, {
           ...corsHeaders(),
           "x-request-id": requestId,
-          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
+          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/infopunks-trust-layer.json`
         });
         logger.info({
           event: "final_route_returned",
@@ -980,116 +878,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    if (method === "GET" && url.pathname.startsWith("/agent-reputation/")) {
-      const subjectId = decodeURIComponent(url.pathname.slice("/agent-reputation/".length));
-      if (!subjectId) {
-        sendJson(
-          res,
-          400,
-          { error: { code: "INVALID_INPUT", message: "Agent reputation path requires an id." } },
-          corsHeaders()
-        );
-        return;
-      }
-
-      const adapterTraceId = createAdapterTraceId();
-      try {
-        const passport = await mcpServer.apiClient.getPassport(subjectId, adapterTraceId);
-        const explanation = await mcpServer.apiClient
-          .getTrustExplanation(subjectId, url.searchParams.get("context_hash"), adapterTraceId)
-          .catch(() => null);
-        sendJson(
-          res,
-          200,
-          {
-            result: {
-              subject_id: subjectId,
-              passport,
-              trust_explanation: explanation
-            },
-            meta: {
-              endpoint: "agent_reputation",
-              adapter_trace_id: adapterTraceId
-            }
-          },
-          corsHeaders()
-        );
-      } catch (error) {
-        const mapped = toMcpToolError(error, adapterTraceId, "get_passport").structuredContent;
-        const code = mapped?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-        sendJson(res, statusFromAdapterErrorCode(code, error?.status ?? 500), mapped, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/verify-evidence") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, corsHeaders());
-        return;
-      }
-      const body = bodyAndRaw.parsed ?? {};
-      const adapterTraceId = createAdapterTraceId();
-      try {
-        const accepted = await mcpServer.apiClient.recordEvidence(body, adapterTraceId);
-        sendJson(
-          res,
-          202,
-          {
-            result: accepted,
-            meta: {
-              endpoint: "verify_evidence",
-              adapter_trace_id: adapterTraceId
-            }
-          },
-          corsHeaders()
-        );
-      } catch (error) {
-        const mapped = toMcpToolError(error, adapterTraceId, "verify_evidence").structuredContent;
-        const code = mapped?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-        sendJson(res, statusFromAdapterErrorCode(code, error?.status ?? 500), mapped, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "GET" && (url.pathname === "/.well-known/x402-bazaar.json" || url.pathname === "/bazaar/discovery")) {
-      sendJson(res, 200, buildBazaarDiscoveryDocument(config), corsHeaders());
-      return;
-    }
-
     if (method === "GET" && url.pathname === "/.well-known/infopunks-trust-layer.json") {
       sendJson(res, 200, buildInfopunksTrustLayerManifest(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/marketplace/readiness") {
-      sendJson(res, 200, await marketplaceReadiness(), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/.well-known/ai-plugin.json") {
-      sendJson(res, 200, buildAiPluginManifest(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && (url.pathname === "/.well-known/agentic-marketplace.json" || url.pathname === "/marketplace/manifest")) {
-      sendJson(res, 200, buildMarketplaceManifest(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/openapi.yaml") {
-      try {
-        const spec = readFileSync(OPENAPI_FILE, "utf8");
-        sendText(res, 200, spec, { ...corsHeaders(), "content-type": "application/yaml; charset=utf-8" });
-      } catch {
-        sendJson(res, 404, { ok: false, error: "openapi_not_found" }, corsHeaders());
-      }
       return;
     }
 
@@ -1104,111 +894,6 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         return;
       }
       sendJson(res, 200, { counters: metrics.snapshot() }, corsHeaders());
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/mcp") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(
-          res,
-          400,
-          {
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: error?.message ?? "Parse error" }
-          },
-          corsHeaders()
-        );
-        return;
-      }
-      const body = bodyAndRaw.parsed;
-
-      if (Array.isArray(body)) {
-        if (body.length > config.maxBatchRequests) {
-          sendJson(
-            res,
-            400,
-            {
-              jsonrpc: "2.0",
-              id: null,
-              error: {
-                code: -32600,
-                message: `Batch request exceeds max size (${config.maxBatchRequests}).`
-              }
-            },
-            corsHeaders()
-          );
-          return;
-        }
-        const responses = [];
-        for (const request of body) {
-          try {
-            const normalizedRequest = attachHeaderPaymentToRpcRequest(request, req.headers);
-            const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
-            if (response) {
-              responses.push(response);
-            }
-          } catch (error) {
-            responses.push({
-              jsonrpc: "2.0",
-              id: request?.id ?? null,
-              error: { code: -32000, message: error?.message ?? "Unhandled server error" }
-            });
-          }
-        }
-        const firstPaymentError = responses.find((item) => PAYMENT_ERROR_CODES.has(item?.result?.structuredContent?.error?.code));
-        const firstPaidRequest = body.find((request) => request?.method === "tools/call");
-        const toolDef = findTool(firstPaidRequest?.params?.name);
-        sendJson(res, firstPaymentError ? 402 : 200, responses, {
-          ...corsHeaders(),
-          ...(firstPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
-          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-        });
-      } else {
-        try {
-          const normalizedRequest = attachHeaderPaymentToRpcRequest(body, req.headers);
-          const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
-          if (!response) {
-            res.writeHead(204, corsHeaders());
-            res.end();
-            return;
-          }
-          const code = response?.result?.structuredContent?.error?.code;
-          const isPaymentError = PAYMENT_ERROR_CODES.has(code);
-          const toolDef = findTool(normalizedRequest?.params?.name);
-          sendJson(res, isPaymentError ? 402 : 200, response, {
-            ...corsHeaders(),
-            ...(isPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
-            "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-          });
-        } catch (error) {
-          sendJson(
-            res,
-            500,
-            {
-              jsonrpc: "2.0",
-              id: body?.id ?? null,
-              error: { code: -32000, message: error?.message ?? "Unhandled server error" }
-            },
-            corsHeaders()
-          );
-        }
-      }
-      logger.info({
-        event: "http_request",
-        method,
-        path: url.pathname,
-        status_code: res.statusCode,
-        duration_ms: Date.now() - started
-      });
       return;
     }
 
@@ -1265,7 +950,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             event: "http_server_started",
             host: config.host,
             port: config.port,
-            mcp_endpoint: `${config.publicUrl ?? `http://${config.host}:${config.port}`}/mcp`
+            resolve_trust_endpoint: `${config.publicUrl ?? `http://${config.host}:${config.port}`}/v1/resolve-trust`
           });
           resolve();
         });
