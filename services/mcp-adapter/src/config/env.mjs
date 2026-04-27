@@ -130,6 +130,10 @@ function resolveInternalServiceToken() {
 }
 
 function validateConfig(config) {
+  if (isNonEmptyString(config.x402VerifierModeRequested) && config.x402VerifierModeRequested !== "facilitator") {
+    throw new Error("X402_VERIFIER_MODE must be facilitator for deterministic x402 settlement flow.");
+  }
+
   if (!isNonEmptyString(config.backendBaseUrl)) {
     throw new Error(
       "INFOPUNKS_CORE_BASE_URL is required (or INFOPUNKS_BACKEND_URL). In Render/non-local deploys, set this to your core API public URL."
@@ -425,7 +429,8 @@ export function loadEnv() {
     publicUrl: publicBaseUrl,
     publicBaseUrl,
     logLevel: process.env.MCP_ADAPTER_LOG_LEVEL ?? "info",
-    x402VerifierMode: process.env.X402_VERIFIER_MODE ?? "facilitator",
+    x402VerifierModeRequested,
+    x402VerifierMode: "facilitator",
     x402AllowStubMode: String(process.env.X402_ALLOW_STUB_MODE ?? "false") === "true",
     x402RequiredDefault: String(process.env.X402_REQUIRED_DEFAULT ?? "true") === "true",
     x402VerifierUrl: x402FacilitatorUrl ?? "https://x402.org/facilitator",
@@ -513,3 +518,4 @@ export function loadEnv() {
   validateConfig(config);
   return config;
 }
+  const x402VerifierModeRequested = process.env.X402_VERIFIER_MODE ?? "facilitator";

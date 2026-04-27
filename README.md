@@ -1,65 +1,86 @@
 # Infopunks Trust Layer
 
-Clean x402 trust-resolution service for Agentic.Market listing.
+## What It Is
 
-## Launch Surface
-
-One paid endpoint:
+HTTP service for Agentic.Market trust routing with one paid API call:
 
 - `POST /v1/resolve-trust`
 
-Public metadata and health:
+Public endpoints:
 
 - `GET /health`
 - `GET /openapi.json`
 - `GET /.well-known/infopunks-trust-layer.json`
 
-Protected payment operations:
-
-- `POST /x402/reconcile`
-- `POST /x402/settlement/webhook`
-- `GET /metrics` when admin token is provided
-
-## Commands
+## 60-Second Onboarding
 
 ```bash
 npm install
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm run readiness
-npm run smoke:x402:testnet
-npm run smoke:x402:mainnet
-```
-
-Smoke scripts skip live paid calls unless `PUBLIC_BASE_URL` and a matching payment JSON are provided. Set `SMOKE_REQUIRED=true` in launch validation to fail instead of skip.
-
-## Deploy
-
-```bash
-npm install
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm run readiness
-```
-
-Start the adapter:
-
-```bash
 npm start
 ```
 
-For the internal core API used by the adapter, Render starts:
+Service default: `http://localhost:4021`
+
+## curl Example
+
+Unpaid call (expected `402`):
 
 ```bash
-node apps/api/server.mjs
+curl -i http://localhost:4021/v1/resolve-trust \
+  -X POST \
+  -H 'content-type: application/json' \
+  -d '{
+    "subject_id": "agent_221",
+    "context": {
+      "task_type": "marketplace_routing",
+      "domain": "general",
+      "risk_level": "medium"
+    }
+  }'
 ```
 
-## Production Config
+Paid retry (expected `200`):
 
-Use `.env.production.example` as the Base mainnet template. Production must use HTTPS public URLs, Base mainnet USDC, facilitator verification, and `ALLOW_TESTNET=false` / `ALLOW_RELAXED_PAYMENT=false`.
+```bash
+curl -i http://localhost:4021/v1/resolve-trust \
+  -X POST \
+  -H 'content-type: application/json' \
+  -H "x-payment: <base64-x402-payment-payload>" \
+  -d '{
+    "subject_id": "agent_221",
+    "context": {
+      "task_type": "marketplace_routing",
+      "domain": "general",
+      "risk_level": "medium"
+    }
+  }'
+```
 
-See `docs/agentic-market.md` for the listing packet and validation commands.
+## Expected Response
+
+On paid success (`200`), response shape:
+
+```json
+{
+  "subject_id": "agent_221",
+  "trust_score": 67,
+  "risk_level": "medium",
+  "confidence": 0.79,
+  "route": "degrade",
+  "reasons": ["recent_validator_reversal"],
+  "receipt": {
+    "x402_verified": true,
+    "network": "eip155:8453",
+    "asset": "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    "payment_receipt_id": "xrc_...",
+    "verifier_reference": "vr_...",
+    "settlement_status": "provisional"
+  }
+}
+```
+
+## Why It Matters
+
+- Enforces paid access for trust resolution (`402` when unpaid).
+- Returns a verified trust decision in one call.
+- Produces a receipt id you can audit in billing and settlement flows.

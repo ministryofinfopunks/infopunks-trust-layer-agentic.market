@@ -1,16 +1,11 @@
 import http from "node:http";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const ADAPTER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const WAR_ROOM_ROOT = path.join(ADAPTER_ROOT, "..", "..", "..", "apps", "war-room");
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
@@ -23,11 +18,6 @@ function sendJson(res, statusCode, payload, extraHeaders = {}) {
   res.end(body);
 }
 
-function sendOpenApiJson(res, config) {
-  const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
-  sendJson(res, 200, buildOpenApiJson(origin, config), corsHeaders());
-}
-
 function sendText(res, statusCode, text, extraHeaders = {}) {
   res.writeHead(statusCode, {
     "content-type": "text/plain; charset=utf-8",
@@ -38,57 +28,9 @@ function sendText(res, statusCode, text, extraHeaders = {}) {
   res.end(text);
 }
 
-function safeEqual(left, right) {
-  const leftBuffer = Buffer.from(String(left ?? ""));
-  const rightBuffer = Buffer.from(String(right ?? ""));
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function contentTypeIsJson(req) {
   const value = String(req.headers?.["content-type"] ?? "");
   return value.toLowerCase().includes("application/json");
-}
-
-function requireAdminToken(req, config) {
-  if (!config.adminEndpointsRequireToken) {
-    return true;
-  }
-  if (!config.adminToken) {
-    return String(config.environment ?? "local") === "local";
-  }
-  const auth = req.headers.authorization;
-  if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    return safeEqual(auth.slice(7).trim(), config.adminToken);
-  }
-  return safeEqual(req.headers["x-admin-token"], config.adminToken);
-}
-
-function verifyWebhookHmac({ req, rawBody, config }) {
-  if (!config.settlementWebhookHmacSecret) {
-    return true;
-  }
-
-  const timestampHeader = req.headers["x-webhook-timestamp"];
-  const signatureHeader = req.headers["x-webhook-signature"];
-  if (typeof timestampHeader !== "string" || typeof signatureHeader !== "string") {
-    return false;
-  }
-
-  const timestampSeconds = Number(timestampHeader);
-  if (!Number.isFinite(timestampSeconds)) {
-    return false;
-  }
-  const skew = Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds);
-  if (skew > config.settlementWebhookMaxSkewSeconds) {
-    return false;
-  }
-
-  const payload = `${timestampHeader}.${rawBody}`;
-  const expected = createHmac("sha256", config.settlementWebhookHmacSecret).update(payload).digest("hex");
-  return safeEqual(signatureHeader, expected);
 }
 
 async function readJsonBody(req) {
@@ -264,6 +206,23 @@ function paymentFromHeaders(headers) {
     paymentPayload: decodedPayload,
     paymentRequirements: accepted
   };
+}
+
+function hasBodyPayment(payment) {
+  if (!payment || typeof payment !== "object") {
+    return false;
+  }
+  return Boolean(
+    payment.paymentPayload
+    || payment.paymentRequirements
+    || payment.rail
+    || payment.payer
+    || payment.nonce
+    || payment.proof
+    || payment.proof_id
+    || payment.reference
+    || payment.units_authorized
+  );
 }
 
 function mergeHeaderPayment(body, headers) {
@@ -692,8 +651,8 @@ function statusFromAdapterErrorCode(code, fallback = 500) {
 }
 
 export function createHttpTransport({ config, mcpServer, logger, metrics }) {
+  void metrics;
   const server = http.createServer(async (req, res) => {
-    const started = Date.now();
     const method = String(req.method ?? "GET").toUpperCase();
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
@@ -703,50 +662,6 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    if (method === "GET" && url.pathname === "/api/war-room/events") {
-      const events = await mcpServer.warRoomFeed?.listLatest?.(50) ?? [];
-      sendJson(
-        res,
-        200,
-        {
-          events: Array.isArray(events) ? events.slice(0, 50) : []
-        },
-        corsHeaders()
-      );
-      return;
-    }
-
-    if (method === "GET" && (url.pathname === "/war-room" || url.pathname === "/war-room/")) {
-      try {
-        const html = readFileSync(path.join(WAR_ROOM_ROOT, "index.html"), "utf8");
-        sendText(res, 200, html, { ...corsHeaders(), "content-type": "text/html; charset=utf-8" });
-      } catch {
-        sendJson(res, 404, { ok: false, error: "war_room_not_found" }, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/war-room/app.js") {
-      try {
-        const js = readFileSync(path.join(WAR_ROOM_ROOT, "app.js"), "utf8");
-        sendText(res, 200, js, { ...corsHeaders(), "content-type": "application/javascript; charset=utf-8" });
-      } catch {
-        sendJson(res, 404, { ok: false, error: "war_room_asset_not_found" }, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/war-room/styles.css") {
-      try {
-        const css = readFileSync(path.join(WAR_ROOM_ROOT, "styles.css"), "utf8");
-        sendText(res, 200, css, { ...corsHeaders(), "content-type": "text/css; charset=utf-8" });
-      } catch {
-        sendJson(res, 404, { ok: false, error: "war_room_asset_not_found" }, corsHeaders());
-      }
-      return;
-    }
-
-    // Lightweight Render health check: no DB/upstream dependency.
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" }, corsHeaders());
       return;
@@ -785,6 +700,33 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         return;
       }
       const toolDef = findTool("resolve_trust");
+      const suppliedPayment = paymentFromHeaders(req.headers) || hasBodyPayment(body?.payment);
+      if (!suppliedPayment) {
+        sendJson(
+          res,
+          402,
+          {
+            error: {
+              code: "ENTITLEMENT_REQUIRED",
+              message: "x402 payment is required for this endpoint."
+            }
+          },
+          {
+            ...corsHeaders(),
+            ...challengeHeaders(config, toolDef, endpointPath),
+            "x-request-id": requestId
+          }
+        );
+        logger.info({
+          event: "402_challenge_issued",
+          request_id: requestId,
+          adapter_trace_id: null,
+          endpoint: endpointPath,
+          entity_id: normalized.entity_id,
+          code: "ENTITLEMENT_REQUIRED"
+        });
+        return;
+      }
       const adapterTraceId = createAdapterTraceId();
       const args = {
         subject_id: normalized.entity_id,
@@ -823,6 +765,16 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           billed_units: output?.meta?.billed_units ?? 0,
           payment_receipt_id: output?.meta?.payment_receipt_id ?? null
         });
+        if (output?.meta?.payment_receipt_id) {
+          logger.info({
+            event: "receipt_logged",
+            request_id: requestId,
+            adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
+            entity_id: normalized.entity_id,
+            payment_receipt_id: output.meta.payment_receipt_id
+          });
+        }
 
         const trustResponse = toResolveTrustV1Response(normalized, output, config);
         logger.info({
@@ -884,58 +836,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
     }
 
     if (method === "GET" && url.pathname === "/openapi.json") {
-      sendOpenApiJson(res, config);
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/metrics") {
-      if (!config.metricsPublic && !requireAdminToken(req, config)) {
-        sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-        return;
-      }
-      sendJson(res, 200, { counters: metrics.snapshot() }, corsHeaders());
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/x402/settlement/webhook") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { ok: false, error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(res, 400, { ok: false, error: error?.message ?? "invalid_json" }, corsHeaders());
-        return;
-      }
-      const body = bodyAndRaw.parsed;
-
-      if (!verifyWebhookHmac({ req, rawBody: bodyAndRaw.raw, config })) {
-        sendJson(res, 401, { ok: false, error: "invalid_signature" }, corsHeaders());
-        return;
-      }
-      if (!config.settlementWebhookHmacSecret && config.settlementWebhookSecret) {
-        const token = req.headers["x-webhook-secret"];
-        if (!safeEqual(token, config.settlementWebhookSecret)) {
-          sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-          return;
-        }
-      }
-
-      const settled = await mcpServer.reconciliationService.applySettlementEvent(body ?? {});
-      sendJson(res, settled.ok ? 200 : 404, settled, corsHeaders());
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/x402/reconcile") {
-      if (!requireAdminToken(req, config)) {
-        sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-        return;
-      }
-      const output = await mcpServer.reconciliationService.reconcileOnce({ adapterTraceId: null });
-      sendJson(res, 200, output, corsHeaders());
+      const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+      sendJson(res, 200, buildOpenApiJson(origin, config), corsHeaders());
       return;
     }
 
@@ -971,10 +873,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 }
 
 export const __testOnly = {
-  safeEqual,
   contentTypeIsJson,
-  requireAdminToken,
-  verifyWebhookHmac,
   statusFromAdapterErrorCode,
   challengeHeaders,
   normalizeTrustScoreRequest,
