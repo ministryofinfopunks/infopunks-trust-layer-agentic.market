@@ -175,7 +175,7 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
   }
 
   async function getWarRoomEvents() {
-    const res = await fetch(`http://127.0.0.1:${port}/api/war-room/events`);
+    const res = await fetch(`http://127.0.0.1:${port}/v1/events/recent?limit=50`);
     const payload = await res.json();
     return { status: res.status, payload };
   }
@@ -211,6 +211,7 @@ test("war room feed records success and endpoint returns newest first", async (t
   assert.equal(eventsResponse.payload.events.length, 50);
   assert.ok(eventsResponse.payload.events[0].timestamp >= eventsResponse.payload.events[1].timestamp);
   assert.ok(eventsResponse.payload.events.some((entry) => entry.event_type === "paid_call.success"));
+  assert.equal(Object.hasOwn(eventsResponse.payload.events[0], "payer"), false);
 });
 
 test("war room feed records failed payment event", async (t) => {

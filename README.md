@@ -1,14 +1,12 @@
 # Infopunks Trust Layer
 
-Infopunks Trust Layer is a paid trust-resolution endpoint for agents.
+Infopunks Trust Layer is one paid trust primitive for Agentic.Market.
 
-Before an agent routes work, capital, validation, execution, or payment, it calls:
+Agents call it before routing work, capital, validation, execution, or payment:
 
 `POST /v1/resolve-trust`
 
-The response returns a trust score, route, reasons, confidence, and x402 receipt.
-
-Trust becomes a live signal agents can query before they act.
+The response returns a trust score, route, reasons, confidence, and x402 receipt. It is a developer-native preflight check: pay once, resolve trust, then decide whether to allow, degrade, or block the next action.
 
 ## What It Is
 
@@ -122,13 +120,14 @@ Generate public testnet proof against deployed URL:
 
 ```bash
 PUBLIC_BASE_URL=https://<your-render-url> \
-X402_TEST_BUYER_PRIVATE_KEY=0x... \
-TESTNET_X402_PAYMENT_JSON='<optional prepared testnet x402 payment JSON>' \
 npm run smoke:public:testnet
 
 PUBLIC_BASE_URL=https://<your-render-url> \
-X402_TEST_BUYER_PRIVATE_KEY=0x... \
-TESTNET_X402_PAYMENT_JSON='<optional prepared testnet x402 payment JSON>' \
+X_PAYMENT_B64=<base64-x402-payment-payload> \
+npm run smoke:public:testnet
+
+PUBLIC_BASE_URL=https://<your-render-url> \
+X_PAYMENT_B64=<base64-x402-payment-payload> \
 npm run proof:public:testnet
 ```
 

@@ -105,6 +105,8 @@ paths:
                           type: string
                         trust_score:
                           type: number
+                        route:
+                          type: string
                         confidence:
                           type: number
                         status:

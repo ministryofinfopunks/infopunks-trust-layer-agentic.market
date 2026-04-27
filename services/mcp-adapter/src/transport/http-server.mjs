@@ -608,6 +608,7 @@ function buildOpenApiJson(origin, config) {
                             timestamp: { type: "string" },
                             subject_id: { type: "string" },
                             trust_score: { type: "number" },
+                            route: { type: "string" },
                             confidence: { type: "number" },
                             status: { type: "string" },
                             receipt_id: { type: "string" },
@@ -663,14 +664,19 @@ function buildOpenApiJson(origin, config) {
 }
 
 function sanitizePublicEvent(event = {}) {
+  const status = event.status ?? null;
+  const route = ["allow", "degrade", "block", "quarantine"].includes(String(event.route ?? status ?? "").toLowerCase())
+    ? String(event.route ?? status).toLowerCase()
+    : null;
   return {
     event_id: event.event_id ?? null,
     event_type: event.event_type ?? null,
     timestamp: event.timestamp ?? null,
     subject_id: event.subject_id ?? null,
     trust_score: toNumeric(event.trust_score, null),
+    route,
     confidence: toNumeric(event.confidence, null),
-    status: event.status ?? null,
+    status,
     receipt_id: event.receipt_id ?? null,
     reason: event.reason ?? null
   };
@@ -852,6 +858,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         const trustResponse = toResolveTrustV1Response(normalized, output, config);
         await mcpServer.warRoomFeed?.record?.({
           event_type: "paid_call.success",
+          timestamp: new Date().toISOString(),
           subject_id: trustResponse.subject_id,
           trust_score: trustResponse.trust_score,
           confidence: trustResponse.confidence,

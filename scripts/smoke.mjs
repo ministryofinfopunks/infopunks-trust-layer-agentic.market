@@ -11,6 +11,7 @@ import { EntitlementService } from "../services/mcp-adapter/src/payments/entitle
 import { X402Verifier } from "../services/mcp-adapter/src/payments/x402-verifier.mjs";
 import { McpServer } from "../services/mcp-adapter/src/transport/mcp-server.mjs";
 import { createHttpTransport } from "../services/mcp-adapter/src/transport/http-server.mjs";
+import { createWarRoomFeed } from "../services/mcp-adapter/src/observability/war-room-feed.mjs";
 
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -138,6 +139,11 @@ async function main() {
     store,
     reconciliationService: { reconcileOnce: async () => ({ ok: true }), applySettlementEvent: async () => ({ ok: true }) }
   });
+  mcpServer.warRoomFeed = createWarRoomFeed({
+    store,
+    config: { adapterRuntimeDir: runtimeDir, warRoomEventsFilePath: path.join(runtimeDir, "war-room-events.jsonl") },
+    logger: { info() {}, warn() {}, error() {} }
+  });
 
   const apiPort = await getFreePort();
   const baseUrl = `http://127.0.0.1:${apiPort}`;
@@ -221,6 +227,18 @@ async function main() {
     assert.ok(receipt);
     assert.equal(receipt.receipt_status, "verified");
     assert.equal(receipt.tool_name, "resolve_trust");
+
+    const recentEvents = await fetch(`${baseUrl}/v1/events/recent`);
+    assert.equal(recentEvents.status, 200);
+    const recentEventsJson = await recentEvents.json();
+    const paidEvent = recentEventsJson.events.find((entry) =>
+      entry.receipt_id === paidJson.receipt.payment_receipt_id && entry.route === "allow"
+    );
+    assert.ok(paidEvent);
+    assert.equal(paidEvent.subject_id, body.subject_id);
+    assert.equal(paidEvent.trust_score, 77);
+    assert.equal(paidEvent.route, "allow");
+    assert.equal(Object.hasOwn(paidEvent, "payer"), false);
   } finally {
     await transport.close();
     await facilitator.close();
