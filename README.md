@@ -1,9 +1,18 @@
 # Infopunks Trust Layer
 
+Infopunks Trust Layer is a paid trust-resolution endpoint for agents.
+
+Before an agent routes work, capital, validation, execution, or payment, it calls:
+
+`POST /v1/resolve-trust`
+
+The response returns a trust score, route, reasons, confidence, and x402 receipt.
+
+Trust becomes a live signal agents can query before they act.
+
 ## What It Is
 
-HTTP service for Agentic.Market trust routing with one paid API call:
-
+Single paid endpoint:
 - `POST /v1/resolve-trust`
 
 Public endpoints:
@@ -11,6 +20,7 @@ Public endpoints:
 - `GET /health`
 - `GET /openapi.json`
 - `GET /.well-known/infopunks-trust-layer.json`
+- `GET /v1/events/recent`
 
 ## 60-Second Onboarding
 
@@ -26,6 +36,14 @@ Run launch checks:
 ```bash
 npm run smoke
 npm run build
+```
+
+Hosted checks:
+
+```bash
+curl https://YOUR_PUBLIC_URL/health
+curl https://YOUR_PUBLIC_URL/.well-known/infopunks-trust-layer.json
+curl https://YOUR_PUBLIC_URL/openapi.json
 ```
 
 ## curl Example
@@ -100,8 +118,30 @@ Generate launch artifacts:
 npm run proof
 ```
 
+Generate public testnet proof against deployed URL:
+
+```bash
+PUBLIC_BASE_URL=https://<your-render-url> \
+X402_TEST_BUYER_PRIVATE_KEY=0x... \
+TESTNET_X402_PAYMENT_JSON='<optional prepared testnet x402 payment JSON>' \
+npm run smoke:public:testnet
+
+PUBLIC_BASE_URL=https://<your-render-url> \
+X402_TEST_BUYER_PRIVATE_KEY=0x... \
+TESTNET_X402_PAYMENT_JSON='<optional prepared testnet x402 payment JSON>' \
+npm run proof:public:testnet
+```
+
 Read recent payment events:
 
 ```bash
 npm run event-feed
 ```
+
+## Environment Matrix
+
+| Environment | Network | Asset | Verifier | Use |
+|---|---|---|---|---|
+| local | Base Sepolia/mock | USDC | local facilitator | CI/dev |
+| testnet | Base Sepolia | USDC | real facilitator | controlled launch |
+| production | Base mainnet | USDC | real facilitator | public launch |

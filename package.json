@@ -18,8 +18,10 @@
     "lint": "node scripts/lint.mjs",
     "test": "node --test tests/mcp-adapter-http-health.test.mjs tests/mcp-adapter-listing-readiness.test.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "smoke:public:testnet": "node scripts/smoke-public.mjs",
     "event-feed": "node scripts/event-feed.mjs --limit 50",
-    "proof": "node scripts/proof-artifacts.mjs"
+    "proof": "node scripts/proof-artifacts.mjs",
+    "proof:public:testnet": "node scripts/proof-public.mjs"
   },
   "dependencies": {
     "pg": "^8.20.0"

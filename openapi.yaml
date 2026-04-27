@@ -69,6 +69,51 @@ paths:
               schema:
                 type: string
                 const: "true"
+  /v1/events/recent:
+    get:
+      summary: Recent sanitized payment/trust events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+      responses:
+        "200":
+          description: Recent event list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        event_id:
+                          type: string
+                        event_type:
+                          type: string
+                        timestamp:
+                          type: string
+                        subject_id:
+                          type: string
+                        trust_score:
+                          type: number
+                        confidence:
+                          type: number
+                        status:
+                          type: string
+                        receipt_id:
+                          type: string
+                        reason:
+                          type: string
+                required: [count, events]
 components:
   schemas:
     ResolveTrustRequest:

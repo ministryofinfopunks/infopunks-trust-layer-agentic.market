@@ -87,6 +87,12 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(openapi.status, 200);
     const openapiBody = await openapi.json();
     assert.ok(openapiBody.paths["/v1/resolve-trust"]);
+    assert.ok(openapiBody.paths["/v1/events/recent"]);
+
+    const events = await fetch(`http://127.0.0.1:${port}/v1/events/recent`);
+    assert.equal(events.status, 200);
+    const eventsBody = await events.json();
+    assert.deepEqual(eventsBody, { count: 0, events: [] });
 
     const legacyRoutes = ["/metrics", "/x402/reconcile", "/x402/settlement/webhook", "/api/war-room/events"];
     for (const route of legacyRoutes) {

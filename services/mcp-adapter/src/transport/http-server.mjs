@@ -485,7 +485,8 @@ function buildInfopunksTrustLayerManifest(config) {
     endpoints: {
       health: `${origin}/health`,
       openapi: `${origin}/openapi.json`,
-      resolve_trust: `${origin}/v1/resolve-trust`
+      resolve_trust: `${origin}/v1/resolve-trust`,
+      events_recent: `${origin}/v1/events/recent`
     },
     payment: {
       rail: "x402",
@@ -577,6 +578,51 @@ function buildOpenApiJson(origin, config) {
             }
           }
         }
+      },
+      "/v1/events/recent": {
+        get: {
+          summary: "Recent sanitized payment/trust events",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              schema: { type: "integer", minimum: 1, maximum: 50, default: 25 }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Recent events",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      count: { type: "integer" },
+                      events: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            event_id: { type: "string" },
+                            event_type: { type: "string" },
+                            timestamp: { type: "string" },
+                            subject_id: { type: "string" },
+                            trust_score: { type: "number" },
+                            confidence: { type: "number" },
+                            status: { type: "string" },
+                            receipt_id: { type: "string" },
+                            reason: { type: "string" }
+                          }
+                        }
+                      }
+                    },
+                    required: ["count", "events"]
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     components: {
@@ -613,6 +659,20 @@ function buildOpenApiJson(origin, config) {
         }
       }
     }
+  };
+}
+
+function sanitizePublicEvent(event = {}) {
+  return {
+    event_id: event.event_id ?? null,
+    event_type: event.event_type ?? null,
+    timestamp: event.timestamp ?? null,
+    subject_id: event.subject_id ?? null,
+    trust_score: toNumeric(event.trust_score, null),
+    confidence: toNumeric(event.confidence, null),
+    status: event.status ?? null,
+    receipt_id: event.receipt_id ?? null,
+    reason: event.reason ?? null
   };
 }
 
@@ -664,6 +724,19 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" }, corsHeaders());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/v1/events/recent") {
+      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 25));
+      const events = await mcpServer.warRoomFeed?.listLatest?.(limit) ?? [];
+      const sanitized = Array.isArray(events) ? events.slice(0, limit).map((entry) => sanitizePublicEvent(entry)) : [];
+      sendJson(
+        res,
+        200,
+        { count: sanitized.length, events: sanitized },
+        corsHeaders()
+      );
       return;
     }
 
@@ -777,6 +850,15 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         }
 
         const trustResponse = toResolveTrustV1Response(normalized, output, config);
+        await mcpServer.warRoomFeed?.record?.({
+          event_type: "paid_call.success",
+          subject_id: trustResponse.subject_id,
+          trust_score: trustResponse.trust_score,
+          confidence: trustResponse.confidence,
+          status: trustResponse.route,
+          receipt_id: trustResponse.receipt?.payment_receipt_id,
+          reason: Array.isArray(trustResponse.reasons) && trustResponse.reasons.length > 0 ? trustResponse.reasons[0] : null
+        });
         logger.info({
           event: "trust_subject_resolved",
           request_id: requestId,

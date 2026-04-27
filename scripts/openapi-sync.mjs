@@ -8,7 +8,8 @@ const requiredPaths = [
   "/health",
   "/openapi.json",
   "/.well-known/infopunks-trust-layer.json",
-  "/v1/resolve-trust"
+  "/v1/resolve-trust",
+  "/v1/events/recent"
 ];
 const forbiddenLegacyPaths = [
   "/healthz",

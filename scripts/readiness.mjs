@@ -15,10 +15,11 @@ function read(path) {
 }
 
 async function liveCheck(baseUrl) {
-  const checks = [
+const checks = [
     ["health", "/health"],
     ["manifest", "/.well-known/infopunks-trust-layer.json"],
-    ["openapi", "/openapi.json"]
+    ["openapi", "/openapi.json"],
+    ["events", "/v1/events/recent"]
   ];
   for (const [name, route] of checks) {
     const response = await fetch(`${baseUrl}${route}`);
@@ -34,7 +35,7 @@ const httpServer = read("services/mcp-adapter/src/transport/http-server.mjs");
 const render = read("render.yaml");
 const env = read("services/mcp-adapter/src/config/env.mjs");
 
-const requiredRoutes = ["/health", "/openapi.json", "/.well-known/infopunks-trust-layer.json", "/v1/resolve-trust"];
+const requiredRoutes = ["/health", "/openapi.json", "/.well-known/infopunks-trust-layer.json", "/v1/resolve-trust", "/v1/events/recent"];
 for (const route of requiredRoutes) {
   if (httpServer.includes(route)) {
     pass(`route present ${route}`);

@@ -166,6 +166,18 @@ async function main() {
 
   await transport.listen();
   try {
+    const health = await fetch(`${baseUrl}/health`);
+    assert.equal(health.status, 200);
+
+    const openapi = await fetch(`${baseUrl}/openapi.json`);
+    assert.equal(openapi.status, 200);
+    const openapiJson = await openapi.json();
+    assert.equal(Boolean(openapiJson?.paths?.["/v1/resolve-trust"]), true);
+    assert.equal(Boolean(openapiJson?.paths?.["/v1/events/recent"]), true);
+
+    const events = await fetch(`${baseUrl}/v1/events/recent`);
+    assert.equal(events.status, 200);
+
     const body = {
       subject_id: "agent_smoke",
       context: { task_type: "smoke", domain: "marketplace", risk_level: "medium" }
