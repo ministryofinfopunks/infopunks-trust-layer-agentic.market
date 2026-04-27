@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-04-27T16:43:13.228Z",
+  "events": [
+    {
+      "event": "paid_call.success",
+      "subject_id": "agent_proof_1",
+      "receipt_id": "xrc_a0cd39aa-1be8-463e-ab5a-6c984bc5497f",
+      "settlement_status": "provisional"
+    },
+    {
+      "event": "paid_call.success",
+      "subject_id": "agent_proof_2",
+      "receipt_id": "xrc_5eec3684-51ea-4a3e-be3d-cee2b08116ee",
+      "settlement_status": "provisional"
+    },
+    {
+      "event": "paid_call.success",
+      "subject_id": "agent_proof_3",
+      "receipt_id": "xrc_4f824eae-5c2b-4ea8-a70c-64e4037e5e37",
+      "settlement_status": "provisional"
+    }
+  ]
+}

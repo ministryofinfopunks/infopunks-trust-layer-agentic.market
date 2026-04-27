@@ -384,6 +384,7 @@ export function loadEnv() {
   const nodeEnv = process.env.NODE_ENV ?? "";
   const environment = process.env.INFOPUNKS_ENVIRONMENT ?? (nodeEnv === "production" ? "production" : "local");
   const adapterRuntimeDir = defaultAdapterRuntimeDir(environment);
+  const x402VerifierModeRequested = process.env.X402_VERIFIER_MODE ?? "facilitator";
   const internalServiceTokenExplicitlyConfigured = isNonEmptyString(process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN);
   const defaultBackendBaseUrl = (environment === "local" || environment === "test")
     ? "http://127.0.0.1:4010"
@@ -518,4 +519,3 @@ export function loadEnv() {
   validateConfig(config);
   return config;
 }
-  const x402VerifierModeRequested = process.env.X402_VERIFIER_MODE ?? "facilitator";

@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-04-27T16:37:12.549Z",
+  "verifier_mode": "facilitator",
+  "go_gate": true,
+  "receipts": [
+    {
+      "call": 1,
+      "subject_id": "agent_launch_1",
+      "status_unpaid": 402,
+      "status_paid": 200,
+      "receipt_id": "xrc_c967cae1-6ce0-4e88-8c51-7027349a7013",
+      "verifier_reference": "vr_1777307832537_ba76c6",
+      "settlement_status": "provisional",
+      "stored_receipt_status": "verified",
+      "stored_settlement_status": "provisional",
+      "stored_tool": "resolve_trust",
+      "stored_payer": "0x2222222222222222222222222222222222222221"
+    },
+    {
+      "call": 2,
+      "subject_id": "agent_launch_2",
+      "status_unpaid": 402,
+      "status_paid": 200,
+      "receipt_id": "xrc_b469df42-7113-44aa-9a6d-7cc63c587cb4",
+      "verifier_reference": "vr_1777307832544_d2adde",
+      "settlement_status": "provisional",
+      "stored_receipt_status": "verified",
+      "stored_settlement_status": "provisional",
+      "stored_tool": "resolve_trust",
+      "stored_payer": "0x2222222222222222222222222222222222222222"
+    },
+    {
+      "call": 3,
+      "subject_id": "agent_launch_3",
+      "status_unpaid": 402,
+      "status_paid": 200,
+      "receipt_id": "xrc_15eb256b-05f2-40a0-a9ce-d2b2660c110f",
+      "verifier_reference": "vr_1777307832547_26f06c",
+      "settlement_status": "provisional",
+      "stored_receipt_status": "verified",
+      "stored_settlement_status": "provisional",
+      "stored_tool": "resolve_trust",
+      "stored_payer": "0x2222222222222222222222222222222222222223"
+    }
+  ]
+}

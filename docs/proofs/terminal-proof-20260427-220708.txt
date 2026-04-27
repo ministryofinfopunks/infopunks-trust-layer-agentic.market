@@ -1,0 +1,22 @@
+# PRE-SUBMISSION TERMINAL PROOF
+timestamp=20260427-220708
+
+## git status --short
+?? docs/proofs/
+
+## npm run smoke
+
+> infopunks-trust-layer@1.0.0 smoke
+> node scripts/smoke.mjs
+
+(node:8690) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+## 3 deterministic paid calls (facilitator mode)
+(node:8672) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+paid_call_1=ok receipt_id=xrc_c967cae1-6ce0-4e88-8c51-7027349a7013
+paid_call_2=ok receipt_id=xrc_b469df42-7113-44aa-9a6d-7cc63c587cb4
+paid_call_3=ok receipt_id=xrc_15eb256b-05f2-40a0-a9ce-d2b2660c110f
+receipt_log_written=docs/proofs/receipt-log-20260427-220708.json
+go_gate=true

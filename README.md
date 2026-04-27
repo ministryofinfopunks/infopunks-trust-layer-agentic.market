@@ -21,6 +21,13 @@ npm start
 
 Service default: `http://localhost:4021`
 
+Run launch checks:
+
+```bash
+npm run smoke
+npm run build
+```
+
 ## curl Example
 
 Unpaid call (expected `402`):
@@ -84,3 +91,17 @@ On paid success (`200`), response shape:
 - Enforces paid access for trust resolution (`402` when unpaid).
 - Returns a verified trust decision in one call.
 - Produces a receipt id you can audit in billing and settlement flows.
+
+## Event Feed And Proof Artifacts
+
+Generate launch artifacts:
+
+```bash
+npm run proof
+```
+
+Read recent payment events:
+
+```bash
+npm run event-feed
+```

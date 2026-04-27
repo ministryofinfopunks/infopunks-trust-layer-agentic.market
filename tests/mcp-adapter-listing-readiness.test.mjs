@@ -192,6 +192,20 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
   assert.equal(config.x402VerifierUrl, "https://x402.org/facilitator");
 });
 
+test("loadEnv enforces facilitator mode for deterministic payment flow", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_VERIFIER_MODE: "strict"
+        },
+        () => loadEnv()
+      ),
+    /must be facilitator/i
+  );
+});
+
 test("loadEnv requires explicit core base URL outside local/test", () => {
   assert.throws(
     () =>
