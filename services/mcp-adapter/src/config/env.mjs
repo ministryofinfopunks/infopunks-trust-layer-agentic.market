@@ -155,6 +155,20 @@ function validateConfig(config) {
       "INFOPUNKS_CORE_BASE_URL cannot point to localhost/loopback in non-local environments (for example Render)."
     );
   }
+  if (isProductionLike(config.environment) && isNonEmptyString(config.publicUrl)) {
+    let publicUrl;
+    try {
+      publicUrl = new URL(config.publicUrl);
+    } catch {
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL must be a valid absolute URL.");
+    }
+    if (!["http:", "https:"].includes(publicUrl.protocol)) {
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL must use http:// or https://.");
+    }
+    if (loopbackHosts.has(publicUrl.hostname.toLowerCase())) {
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL cannot point to localhost/loopback in non-local environments.");
+    }
+  }
 
   if (!ALLOWED_TRANSPORTS.has(config.transportMode)) {
     throw new Error(`MCP_ADAPTER_TRANSPORT must be one of: ${Array.from(ALLOWED_TRANSPORTS).join(", ")}.`);
@@ -200,19 +214,19 @@ function validateConfig(config) {
 
   if (mainnetProd) {
     if (!isNonEmptyString(config.publicBaseUrl)) {
-      throw new Error("PUBLIC_BASE_URL is required for production mainnet deployment.");
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL is required for production mainnet deployment.");
     }
     let publicUrl;
     try {
       publicUrl = new URL(config.publicBaseUrl);
     } catch {
-      throw new Error("PUBLIC_BASE_URL must be a valid absolute HTTPS URL.");
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL must be a valid absolute HTTPS URL.");
     }
     if (publicUrl.protocol !== "https:") {
-      throw new Error("PUBLIC_BASE_URL must use HTTPS in production.");
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL must use HTTPS in production.");
     }
     if (loopbackHosts.has(publicUrl.hostname.toLowerCase()) || containsUnsafeProductionMarker(config.publicBaseUrl)) {
-      throw new Error("PUBLIC_BASE_URL cannot contain localhost, Sepolia, mock, or relaxed markers in production.");
+      throw new Error("MCP_ADAPTER_PUBLIC_URL or PUBLIC_BASE_URL cannot contain localhost, Sepolia, mock, or relaxed markers in production.");
     }
     if (containsUnsafeProductionMarker(config.backendBaseUrl) || containsUnsafeProductionMarker(config.x402VerifierUrl)) {
       throw new Error("Production URLs cannot contain localhost, Sepolia, mock, or relaxed markers.");
@@ -397,7 +411,9 @@ export function loadEnv() {
     ?.trim()
     .replace(/\/$/, "") ?? "";
   const { token: internalServiceToken, source: internalServiceTokenSource } = resolveInternalServiceToken();
-  const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? process.env.MCP_ADAPTER_PUBLIC_URL ?? null;
+  const publicBaseUrl = isNonEmptyString(process.env.PUBLIC_BASE_URL)
+    ? process.env.PUBLIC_BASE_URL.trim()
+    : (isNonEmptyString(process.env.MCP_ADAPTER_PUBLIC_URL) ? process.env.MCP_ADAPTER_PUBLIC_URL.trim() : null);
   const x402NetworkRaw = process.env.X402_NETWORK ?? null;
   const x402AssetRaw = process.env.X402_ASSET ?? null;
   const x402PriceUsd = process.env.X402_PRICE_USD ?? null;

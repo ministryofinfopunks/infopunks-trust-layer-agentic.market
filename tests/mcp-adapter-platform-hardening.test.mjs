@@ -61,10 +61,10 @@ function makeProdOverrides(extra = {}) {
   };
 }
 
-test("loadEnv forbids stub verifier mode in non-local by default", () => {
+test("loadEnv rejects non-facilitator verifier mode", () => {
   assert.throws(
     () => withEnv(makeProdOverrides({ X402_VERIFIER_MODE: "stub", X402_ALLOW_STUB_MODE: "false" }), () => loadEnv()),
-    (error) => String(error?.message ?? "").includes("X402_VERIFIER_MODE=stub")
+    (error) => String(error?.message ?? "").includes("X402_VERIFIER_MODE must be facilitator")
   );
 });
 
@@ -105,8 +105,53 @@ test("loadEnv requires production public HTTPS URL and relaxed payment disabled"
       PUBLIC_BASE_URL: "http://localhost:4021",
       ALLOW_RELAXED_PAYMENT: "true"
     }), () => loadEnv()),
-    (error) => String(error?.message ?? "").includes("PUBLIC_BASE_URL must use HTTPS")
+    (error) => String(error?.message ?? "").includes("cannot point to localhost/loopback")
   );
+});
+
+test("loadEnv rejects localhost public URL in non-local testnet deployments", () => {
+  assert.throws(
+    () => withEnv(makeProdOverrides({
+      NODE_ENV: "test",
+      INFOPUNKS_ENVIRONMENT: "testnet",
+      PUBLIC_BASE_URL: "http://localhost:4021",
+      MCP_ADAPTER_PUBLIC_URL: null,
+      X402_NETWORK: "base-sepolia",
+      X402_PAYMENT_ASSET_ADDRESS: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      ALLOW_TESTNET: "true"
+    }), () => loadEnv()),
+    (error) => String(error?.message ?? "").includes("cannot point to localhost/loopback")
+  );
+});
+
+test("loadEnv allows Base Sepolia for non-local testnet deployments", () => {
+  const config = withEnv(
+    makeProdOverrides({
+      NODE_ENV: "test",
+      INFOPUNKS_ENVIRONMENT: "testnet",
+      PUBLIC_BASE_URL: "https://mcp-testnet.infopunks.ai",
+      MCP_ADAPTER_PUBLIC_URL: null,
+      X402_NETWORK: "base-sepolia",
+      X402_PAYMENT_ASSET_ADDRESS: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      ALLOW_TESTNET: "true"
+    }),
+    () => loadEnv()
+  );
+
+  assert.equal(config.x402SupportedNetworks[0], "eip155:84532");
+  assert.equal(config.x402VerifierMode, "facilitator");
+});
+
+test("loadEnv accepts MCP_ADAPTER_PUBLIC_URL when PUBLIC_BASE_URL is empty", () => {
+  const config = withEnv(
+    makeProdOverrides({
+      PUBLIC_BASE_URL: "",
+      MCP_ADAPTER_PUBLIC_URL: "https://mcp.infopunks.ai"
+    }),
+    () => loadEnv()
+  );
+
+  assert.equal(config.publicUrl, "https://mcp.infopunks.ai");
 });
 
 test("loadEnv rejects unsafe backend drivers in multi-instance mode", () => {
