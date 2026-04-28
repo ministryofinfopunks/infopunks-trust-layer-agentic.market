@@ -26,7 +26,28 @@ function extractNonceFromPaymentPayload(paymentPayload) {
   return typeof nonce === "string" && nonce.trim() ? nonce : null;
 }
 
-function cdpV2VerifyPayload({ paymentPayload, paymentRequirements }) {
+function byteLengthFromHex(value) {
+  if (typeof value !== "string") {
+    return 0;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return 0;
+  }
+  const withoutPrefix = normalized.startsWith("0x") ? normalized.slice(2) : normalized;
+  if (!withoutPrefix || withoutPrefix.length % 2 !== 0) {
+    return 0;
+  }
+  return withoutPrefix.length / 2;
+}
+
+function cdpV2PayloadPair(payment) {
+  const paymentPayload = payment?.paymentPayload ?? null;
+  const paymentRequirements = payment?.paymentRequirements ?? paymentPayload?.accepted ?? null;
+  return { paymentPayload, paymentRequirements };
+}
+
+function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
   const payloadWithVersion = paymentPayload && typeof paymentPayload === "object"
     ? { x402Version: 2, ...paymentPayload }
     : paymentPayload;
@@ -35,6 +56,40 @@ function cdpV2VerifyPayload({ paymentPayload, paymentRequirements }) {
     paymentPayload: payloadWithVersion,
     paymentRequirements
   };
+}
+
+function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
+  const paymentPayload = payload?.paymentPayload ?? null;
+  const paymentRequirements = payload?.paymentRequirements ?? null;
+  const authorization = paymentPayload?.payload?.authorization ?? null;
+  const signature = paymentPayload?.payload?.signature ?? null;
+  logger?.info?.({
+    event: "cdp_facilitator_payload_shape",
+    phase,
+    has_x402Version: Object.hasOwn(payload ?? {}, "x402Version"),
+    x402Version: payload?.x402Version ?? null,
+    has_paymentPayload: Boolean(paymentPayload),
+    has_paymentRequirements: Boolean(paymentRequirements),
+    payload_scheme: paymentPayload?.accepted?.scheme ?? paymentRequirements?.scheme ?? null,
+    payload_network: paymentPayload?.accepted?.network ?? paymentRequirements?.network ?? null,
+    payload_auth_from: authorization?.from ?? null,
+    payload_auth_to: authorization?.to ?? null,
+    payload_auth_value: authorization?.value ?? null,
+    payload_auth_validAfter: authorization?.validAfter ?? null,
+    payload_auth_validBefore: authorization?.validBefore ?? null,
+    payload_nonce_len: byteLengthFromHex(authorization?.nonce),
+    has_signature: typeof signature === "string" && signature.trim().length > 0,
+    signature_len: byteLengthFromHex(signature),
+    req_scheme: paymentRequirements?.scheme ?? null,
+    req_network: paymentRequirements?.network ?? null,
+    req_asset: paymentRequirements?.asset ?? null,
+    req_payTo: paymentRequirements?.payTo ?? null,
+    req_amount: paymentRequirements?.amount ?? null,
+    req_maxTimeoutSeconds: paymentRequirements?.maxTimeoutSeconds ?? null,
+    req_extra_name: paymentRequirements?.extra?.name ?? null,
+    req_extra_version: paymentRequirements?.extra?.version ?? null,
+    req_extra_symbol: paymentRequirements?.extra?.symbol ?? null
+  });
 }
 
 function localStrictVerify({ payment, requiredUnits, sharedSecret, fallbackPayer }) {
@@ -135,8 +190,7 @@ export class X402Verifier {
 
   async verify({ payment, requiredUnits, operation, fallbackPayer, adapterTraceId, entitlement }) {
     const started = Date.now();
-    const x402PaymentPayload = payment?.paymentPayload ?? null;
-    const x402PaymentRequirements = payment?.paymentRequirements ?? x402PaymentPayload?.accepted ?? null;
+    const { paymentPayload: x402PaymentPayload, paymentRequirements: x402PaymentRequirements } = cdpV2PayloadPair(payment);
     const x402NativeFlow = Boolean(x402PaymentPayload && x402PaymentRequirements);
     const payloadPayer = extractPayerFromPaymentPayload(x402PaymentPayload);
     const payloadNonce = extractNonceFromPaymentPayload(x402PaymentPayload);
@@ -190,7 +244,7 @@ export class X402Verifier {
       const payload = x402NativeFlow
         ? {
           ...(this.facilitatorProvider === "cdp"
-            ? cdpV2VerifyPayload({
+            ? cdpV2PhasePayload({
               paymentPayload: x402PaymentPayload,
               paymentRequirements: x402PaymentRequirements
             })
@@ -208,15 +262,10 @@ export class X402Verifier {
           entitlement
         };
       if (this.facilitatorProvider === "cdp" && x402NativeFlow) {
-        this.logger?.info?.({
-          event: "x402_cdp_verify_request_shape",
-          facilitator_provider: "cdp",
-          x402_version_present: payload?.x402Version === 2,
-          payment_payload_present: Boolean(payload?.paymentPayload),
-          payment_requirements_present: Boolean(payload?.paymentRequirements),
-          network: payload?.paymentRequirements?.network ?? null,
-          scheme: payload?.paymentRequirements?.scheme ?? null,
-          asset: payload?.paymentRequirements?.asset ?? null
+        logCdpFacilitatorPayloadShape({
+          logger: this.logger,
+          phase: "verify",
+          payload
         });
       }
       const response = await withTimeout(
@@ -364,6 +413,66 @@ export class X402Verifier {
         mode: this.mode,
         facilitator_provider: this.facilitatorProvider,
         reason: "health_probe_failed"
+      };
+    }
+  }
+
+  async settle({ payment, adapterTraceId = null } = {}) {
+    if (this.mode === "stub" || this.mode === "strict") {
+      return { ok: true, skipped: true, reason: "mode_without_remote_settlement" };
+    }
+    if (this.facilitatorProvider !== "cdp") {
+      return { ok: true, skipped: true, reason: "provider_without_remote_settlement" };
+    }
+    if (!this.verifierUrl) {
+      return {
+        ok: false,
+        reason: "PAYMENT_VERIFICATION_FAILED",
+        details: { message: "Verifier URL is missing for facilitator mode." }
+      };
+    }
+
+    const { paymentPayload, paymentRequirements } = cdpV2PayloadPair(payment);
+    if (!paymentPayload || !paymentRequirements) {
+      return { ok: true, skipped: true, reason: "missing_native_payment_payload" };
+    }
+    const payload = cdpV2PhasePayload({ paymentPayload, paymentRequirements });
+    logCdpFacilitatorPayloadShape({
+      logger: this.logger,
+      phase: "settle",
+      payload
+    });
+
+    try {
+      const response = await withTimeout(
+        async (signal) =>
+          fetch(`${this.verifierUrl.replace(/\/$/, "")}/settle`, {
+            method: "POST",
+            signal,
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+              ...(await this.authHeaders("settle")),
+              ...(adapterTraceId ? { "x-adapter-trace-id": adapterTraceId } : {})
+            },
+            body: JSON.stringify(payload)
+          }),
+        this.timeoutMs
+      );
+      const responseBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return {
+          ok: false,
+          reason: "PAYMENT_VERIFICATION_FAILED",
+          details: { status: response.status, verifier_body: responseBody }
+        };
+      }
+      return { ok: true, details: responseBody };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "PAYMENT_VERIFICATION_FAILED",
+        details: { message: error?.message ?? "Settle request failed." }
       };
     }
   }

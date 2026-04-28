@@ -211,17 +211,42 @@ test("openfacilitator verifier keeps x402-native payment payload/requirements sh
 
 test("cdp verifier sends v2 payment shape with top-level x402Version", async (t) => {
   const originalFetch = globalThis.fetch;
-  let postedBody = null;
-  globalThis.fetch = async (_url, init) => {
-    postedBody = JSON.parse(init?.body ?? "{}");
+  let postedVerifyBody = null;
+  let postedSettleBody = null;
+  const cdpShapeLogs = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init?.body ?? "{}");
+    if (String(url).endsWith("/verify")) {
+      postedVerifyBody = body;
+      return new Response(
+        JSON.stringify({
+          isValid: true,
+          verifier_reference: "rcpt_cdp_123",
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    if (String(url).endsWith("/settle")) {
+      postedSettleBody = body;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
     return new Response(
-      JSON.stringify({
-        isValid: true,
-        verifier_reference: "rcpt_cdp_123",
-        settlement_status: "settled"
-      }),
+      JSON.stringify({ ok: false }),
       {
-        status: 200,
+        status: 404,
         headers: { "content-type": "application/json" }
       }
     );
@@ -237,7 +262,15 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
     cdpApiKeyId: "test-key-id",
     cdpApiKeySecret: "test-key-secret",
     timeoutMs: 2000,
-    logger: { info() {}, warn() {}, error() {} }
+    logger: {
+      info(payload) {
+        if (payload?.event === "cdp_facilitator_payload_shape") {
+          cdpShapeLogs.push(payload);
+        }
+      },
+      warn() {},
+      error() {}
+    }
   });
   verifier.authHeaders = async () => ({});
 
@@ -249,34 +282,78 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
       amount: "10000",
       asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
       payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
-      maxTimeoutSeconds: 300
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USDC",
+        version: "2",
+        symbol: "USDC"
+      }
     },
     payload: {
       authorization: {
         from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
-        nonce: "0xdef"
-      }
+        to: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
     }
   };
 
+  const payment = {
+    rail: "x402",
+    paymentPayload,
+    paymentRequirements: paymentPayload.accepted
+  };
   const result = await verifier.verify({
-    payment: {
-      rail: "x402",
-      paymentPayload,
-      paymentRequirements: paymentPayload.accepted
-    },
+    payment,
     requiredUnits: 1,
     operation: "resolve_trust",
     fallbackPayer: "payer-1",
     adapterTraceId: "mcp_trc_native_cdp",
     entitlement: null
   });
+  const settleResult = await verifier.settle({
+    payment,
+    adapterTraceId: "mcp_trc_native_cdp"
+  });
 
-  assert.equal(postedBody.x402Version, 2);
-  assert.equal(postedBody.paymentPayload.x402Version, 2);
-  assert.equal(postedBody.paymentRequirements.network, "eip155:8453");
+  assert.equal(postedVerifyBody.x402Version, 2);
+  assert.equal(postedVerifyBody.paymentPayload.x402Version, 2);
+  assert.deepEqual(postedVerifyBody.paymentRequirements, paymentPayload.accepted);
+  assert.equal(postedVerifyBody.paymentRequirements.amount, "10000");
+  assert.equal(typeof postedVerifyBody.paymentRequirements.amount, "string");
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.from, paymentPayload.payload.authorization.from);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.to, paymentPayload.payload.authorization.to);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.value, "10000");
+  assert.equal(typeof postedVerifyBody.paymentPayload.payload.authorization.value, "string");
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, paymentPayload.payload.authorization.nonce);
   assert.equal(result.ok, true);
-  assert.equal(result.nonce, "0xdef");
+  assert.equal(settleResult.ok, true);
+  assert.deepEqual(postedSettleBody.paymentRequirements, postedVerifyBody.paymentRequirements);
+  assert.deepEqual(postedSettleBody.paymentPayload, postedVerifyBody.paymentPayload);
+
+  const verifyShapeLog = cdpShapeLogs.find((entry) => entry.phase === "verify");
+  const settleShapeLog = cdpShapeLogs.find((entry) => entry.phase === "settle");
+  assert.ok(verifyShapeLog);
+  assert.ok(settleShapeLog);
+  assert.equal(verifyShapeLog.has_x402Version, true);
+  assert.equal(verifyShapeLog.x402Version, 2);
+  assert.equal(verifyShapeLog.req_amount, "10000");
+  assert.equal(verifyShapeLog.payload_auth_from, paymentPayload.payload.authorization.from);
+  assert.equal(verifyShapeLog.payload_auth_to, paymentPayload.payload.authorization.to);
+  assert.equal(verifyShapeLog.payload_auth_value, "10000");
+  assert.equal(verifyShapeLog.payload_nonce_len, 32);
+  assert.equal(verifyShapeLog.has_signature, true);
+  assert.equal(verifyShapeLog.signature_len, 65);
+  assert.equal(verifyShapeLog.req_extra_name, "USDC");
+  assert.equal(verifyShapeLog.req_extra_version, "2");
+  assert.equal(verifyShapeLog.req_extra_symbol, "USDC");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 });
 
 test("entitlement service creates provisional receipt and spend state", async (t) => {

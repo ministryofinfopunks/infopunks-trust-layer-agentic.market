@@ -244,8 +244,13 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
       payload: {
         authorization: {
           from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
-          nonce: "0xnonce_test_signature"
-        }
+          to: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+          value: "10000",
+          validAfter: "1777403986",
+          validBefore: "1777404286",
+          nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        signature: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       }
     };
     const paymentSignature = Buffer.from(JSON.stringify(paymentPayload), "utf8").toString("base64");
@@ -263,6 +268,12 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(response.status, 200);
     assert.equal(capturedPayment?.paymentPayload?.x402Version, 2);
     assert.equal(capturedPayment?.paymentRequirements?.network, "eip155:8453");
+    assert.equal(capturedPayment?.paymentRequirements?.amount, "10000");
+    assert.equal(typeof capturedPayment?.paymentRequirements?.amount, "string");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.to, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.value, "10000");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   } finally {
     await transport.close();
   }
