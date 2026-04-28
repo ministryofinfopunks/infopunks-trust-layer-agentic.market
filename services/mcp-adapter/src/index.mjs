@@ -40,8 +40,11 @@ const store = await createAdapterStateStore(config);
 const subjectResolution = new SubjectResolutionService({ apiClient, mapper, config, store });
 const verifier = new X402Verifier({
   mode: config.x402VerifierMode,
+  facilitatorProvider: config.x402FacilitatorProvider,
   verifierUrl: config.x402VerifierUrl,
   verifierApiKey: config.x402VerifierApiKey,
+  cdpApiKeyId: config.cdpApiKeyId,
+  cdpApiKeySecret: config.cdpApiKeySecret,
   timeoutMs: config.x402VerifierTimeoutMs,
   sharedSecret: config.x402SharedSecret,
   logger

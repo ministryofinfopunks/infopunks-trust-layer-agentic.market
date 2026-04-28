@@ -34,6 +34,14 @@ test("/health is unconditional and does not depend on upstream readiness", async
       adapterName: "infopunks-test-adapter",
       adapterVersion: "test",
       x402VerifierMode: "facilitator",
+      x402FacilitatorProvider: "openfacilitator",
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:84532"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
       settlementWebhookHmacSecret: "whsec",
       settlementWebhookSecret: null,
       adminEndpointsRequireToken: true,
@@ -93,6 +101,11 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(events.status, 200);
     const eventsBody = await events.json();
     assert.deepEqual(eventsBody, { count: 0, events: [] });
+
+    const unpaidEmpty = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, { method: "POST" });
+    assert.equal(unpaidEmpty.status, 402);
+    const challenge = unpaidEmpty.headers.get("payment-required");
+    assert.equal(typeof challenge, "string");
 
     const legacyRoutes = ["/metrics", "/x402/reconcile", "/x402/settlement/webhook", "/api/war-room/events"];
     for (const route of legacyRoutes) {

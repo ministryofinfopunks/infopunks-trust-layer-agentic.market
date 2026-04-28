@@ -42,7 +42,13 @@ function normalizeEvent(event = {}) {
     mode: normalizeString(event.mode),
     confidence: normalizeNumber(event.confidence),
     status: normalizeString(event.status),
+    route: normalizeString(event.route),
+    risk_level: normalizeString(event.risk_level),
     receipt_id: normalizeString(event.receipt_id),
+    facilitator_provider: normalizeString(event.facilitator_provider),
+    network: normalizeString(event.network),
+    payTo: normalizeString(event.payTo ?? event.pay_to),
+    price: normalizeString(event.price),
     amount: normalizeNumber(event.amount),
     error_code: normalizeString(event.error_code),
     reason: normalizeString(event.reason)
@@ -119,4 +125,3 @@ export function createWarRoomFeed({ store, config, logger }) {
     listLatest: (limit) => fallback.listLatest(limit)
   };
 }
-

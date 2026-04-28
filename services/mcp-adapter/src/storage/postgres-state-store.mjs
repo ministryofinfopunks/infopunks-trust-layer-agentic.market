@@ -183,13 +183,30 @@ export class PostgresAdapterStateStore {
         mode TEXT,
         confidence DOUBLE PRECISION,
         status TEXT,
+        route TEXT,
+        risk_level TEXT,
         receipt_id TEXT,
+        facilitator_provider TEXT,
+        network TEXT,
+        pay_to TEXT,
+        price TEXT,
         amount DOUBLE PRECISION,
         error_code TEXT,
         reason TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
+
+    for (const [column, type] of [
+      ["route", "TEXT"],
+      ["risk_level", "TEXT"],
+      ["facilitator_provider", "TEXT"],
+      ["network", "TEXT"],
+      ["pay_to", "TEXT"],
+      ["price", "TEXT"]
+    ]) {
+      await this.pool.query(`ALTER TABLE war_room_events ADD COLUMN IF NOT EXISTS ${column} ${type}`);
+    }
   }
 
   buildPaymentFingerprint({ nonce, proofId, sessionId, verifierReference, payer }) {
@@ -354,7 +371,13 @@ export class PostgresAdapterStateStore {
       mode: event.mode ?? null,
       confidence: Number.isFinite(Number(event.confidence)) ? Number(event.confidence) : null,
       status: event.status ?? null,
+      route: event.route ?? null,
+      risk_level: event.risk_level ?? null,
       receipt_id: event.receipt_id ?? null,
+      facilitator_provider: event.facilitator_provider ?? null,
+      network: event.network ?? null,
+      payTo: event.payTo ?? event.pay_to ?? null,
+      price: event.price ?? null,
       amount: Number.isFinite(Number(event.amount)) ? Number(event.amount) : null,
       error_code: event.error_code ?? null,
       reason: event.reason ?? null
@@ -364,8 +387,9 @@ export class PostgresAdapterStateStore {
       `
         INSERT INTO war_room_events (
           event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
-          mode, confidence, status, receipt_id, amount, error_code, reason
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
+          network, pay_to, price, amount, error_code, reason
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       `,
       [
         normalized.event_id,
@@ -378,7 +402,13 @@ export class PostgresAdapterStateStore {
         normalized.mode,
         normalized.confidence,
         normalized.status,
+        normalized.route,
+        normalized.risk_level,
         normalized.receipt_id,
+        normalized.facilitator_provider,
+        normalized.network,
+        normalized.payTo,
+        normalized.price,
         normalized.amount,
         normalized.error_code,
         normalized.reason
@@ -393,7 +423,8 @@ export class PostgresAdapterStateStore {
     const result = await this.pool.query(
       `
         SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
-               mode, confidence, status, receipt_id, amount, error_code, reason
+               mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
+               network, pay_to, price, amount, error_code, reason
         FROM war_room_events
         ORDER BY timestamp DESC
         LIMIT $1

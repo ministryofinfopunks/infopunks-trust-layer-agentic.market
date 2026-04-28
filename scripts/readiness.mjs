@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { loadEnv } from "../services/mcp-adapter/src/config/env.mjs";
 
 function fail(message) {
   console.error(`FAIL ${message}`);
@@ -69,6 +70,29 @@ if (env.includes("NODE_ENV=production") && env.includes("ALLOW_RELAXED_PAYMENT=f
   pass("production env validation markers present");
 } else {
   fail("production env validation markers missing");
+}
+
+if (env.includes("X402_FACILITATOR_PROVIDER") && env.includes("openfacilitator") && env.includes("cdp")) {
+  pass("facilitator provider selector supports openfacilitator and cdp");
+} else {
+  fail("facilitator provider selector markers missing");
+}
+
+if (
+  env.includes("https://api.cdp.coinbase.com/platform/v2/x402")
+  && env.includes("CDP_API_KEY_ID")
+  && env.includes("CDP_API_KEY_SECRET")
+) {
+  pass("CDP facilitator validation markers present");
+} else {
+  fail("CDP facilitator validation markers missing");
+}
+
+try {
+  const config = loadEnv();
+  pass(`current env validates for ${config.x402FacilitatorProvider} facilitator provider`);
+} catch (error) {
+  fail(`current env validation failed: ${error?.message ?? error}`);
 }
 
 const publicBaseUrl = String(process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");

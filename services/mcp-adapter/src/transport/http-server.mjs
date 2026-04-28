@@ -6,6 +6,12 @@ import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and risk context.";
+const RESOLVE_TRUST_BAZAAR_EXTENSION = {
+  discoverable: true,
+  category: "infrastructure",
+  tags: ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
+};
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
@@ -31,6 +37,14 @@ function sendText(res, statusCode, text, extraHeaders = {}) {
 function contentTypeIsJson(req) {
   const value = String(req.headers?.["content-type"] ?? "");
   return value.toLowerCase().includes("application/json");
+}
+
+function hasRequestBody(req) {
+  const contentLength = req.headers?.["content-length"];
+  if (contentLength != null && Number(contentLength) > 0) {
+    return true;
+  }
+  return Boolean(req.headers?.["transfer-encoding"]);
 }
 
 async function readJsonBody(req) {
@@ -129,8 +143,15 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
     error: "Payment required",
     resource: {
       url: resourceUrl(config, resourcePath),
-      description: toolDef?.description ?? "Paid Infopunks endpoint",
-      mimeType: "application/json"
+      description: resourcePath === "/v1/resolve-trust"
+        ? RESOLVE_TRUST_BAZAAR_DESCRIPTION
+        : (toolDef?.description ?? "Paid Infopunks endpoint"),
+      mimeType: "application/json",
+      inputSchema: toolDef?.inputSchema ?? undefined,
+      outputSchema: toolDef?.outputSchema ?? undefined,
+      extensions: {
+        bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
+      }
     },
     accepts: [
       {
@@ -466,8 +487,11 @@ function toResolveTrustV1Response(request, toolOutput, config) {
     reasons: reasonsFromResult(result),
     receipt: {
       x402_verified: Boolean(toolOutput?.meta?.payment_receipt_id),
+      facilitator_provider: receipt?.facilitator_provider ?? config.x402FacilitatorProvider ?? "openfacilitator",
       network,
       asset,
+      payTo: receipt?.payTo ?? config.x402PayTo ?? null,
+      price: receipt?.price ?? config.x402Price ?? config.x402PriceUsd ?? config.x402PricePerUnitAtomic ?? null,
       payment_receipt_id: toolOutput?.meta?.payment_receipt_id ?? null,
       verifier_reference: receipt?.verifier_reference ?? toolOutput?.meta?.verifier_reference ?? null,
       settlement_status: receipt?.settlement_status ?? null
@@ -477,6 +501,7 @@ function toResolveTrustV1Response(request, toolOutput, config) {
 
 function buildInfopunksTrustLayerManifest(config) {
   const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+  const resolveTrustTool = findTool("resolve_trust");
   return {
     name: "Infopunks Trust Layer",
     slug: "infopunks-trust-layer",
@@ -488,13 +513,28 @@ function buildInfopunksTrustLayerManifest(config) {
       resolve_trust: `${origin}/v1/resolve-trust`,
       events_recent: `${origin}/v1/events/recent`
     },
+    resources: {
+      resolve_trust: {
+        method: "POST",
+        url: `${origin}/v1/resolve-trust`,
+        description: RESOLVE_TRUST_BAZAAR_DESCRIPTION,
+        mimeType: "application/json",
+        inputSchema: resolveTrustTool?.inputSchema ?? null,
+        outputSchema: resolveTrustTool?.outputSchema ?? null,
+        extensions: {
+          bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
+        }
+      }
+    },
     payment: {
       rail: "x402",
       network: (config.x402SupportedNetworks ?? [])[0] ?? null,
       asset: (config.x402AcceptedAssets ?? [])[0] ?? null,
       price_usd: config.x402PriceUsd ?? null,
+      price: config.x402Price ?? config.x402PriceUsd ?? null,
       price_atomic: config.x402PricePerUnitAtomic,
-      pay_to_configured: Boolean(config.x402PayTo)
+      pay_to_configured: Boolean(config.x402PayTo),
+      facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator"
     },
     discoverability: {
       agentic_market_listing: `${origin}/.well-known/infopunks-trust-layer.json`
@@ -548,7 +588,11 @@ function buildOpenApiJson(origin, config) {
       "/v1/resolve-trust": {
         post: {
           summary: "Resolve trust with x402 payment gating",
-          description: "Returns HTTP 402 with an x402 challenge when payment is missing or invalid.",
+          description: RESOLVE_TRUST_BAZAAR_DESCRIPTION,
+          extensions: {
+            bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
+          },
+          "x-bazaar": RESOLVE_TRUST_BAZAAR_EXTENSION,
           requestBody: {
             required: true,
             content: {
@@ -610,9 +654,14 @@ function buildOpenApiJson(origin, config) {
                             trust_score: { type: "number" },
                             route: { type: "string" },
                             confidence: { type: "number" },
-                            status: { type: "string" },
-                            receipt_id: { type: "string" },
-                            reason: { type: "string" }
+                status: { type: "string" },
+                facilitator_provider: { type: "string" },
+                network: { type: "string" },
+                payTo: { type: "string" },
+                price: { type: "string" },
+                risk_level: { type: "string" },
+                receipt_id: { type: "string" },
+                reason: { type: "string" }
                           }
                         }
                       }
@@ -650,8 +699,11 @@ function buildOpenApiJson(origin, config) {
               type: "object",
               properties: {
                 x402_verified: { type: "boolean" },
+                facilitator_provider: { type: "string" },
                 network: { type: "string" },
-                asset: { type: "string" }
+                asset: { type: "string" },
+                payTo: { type: "string" },
+                price: { type: "string" }
               },
               required: ["x402_verified", "network", "asset"]
             }
@@ -678,6 +730,11 @@ function sanitizePublicEvent(event = {}) {
     confidence: toNumeric(event.confidence, null),
     status,
     receipt_id: event.receipt_id ?? null,
+    facilitator_provider: event.facilitator_provider ?? null,
+    network: event.network ?? null,
+    payTo: event.payTo ?? event.pay_to ?? null,
+    price: event.price ?? null,
+    risk_level: event.risk_level ?? null,
     reason: event.reason ?? null
   };
 }
@@ -751,6 +808,34 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       const requestId = typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
         ? req.headers["x-request-id"].trim()
         : `req_${randomUUID()}`;
+      const toolDef = findTool("resolve_trust");
+      const headerPayment = paymentFromHeaders(req.headers);
+      if (!headerPayment && !hasRequestBody(req)) {
+        sendJson(
+          res,
+          402,
+          {
+            error: {
+              code: "ENTITLEMENT_REQUIRED",
+              message: "x402 payment is required for this endpoint."
+            }
+          },
+          {
+            ...corsHeaders(),
+            ...challengeHeaders(config, toolDef, endpointPath),
+            "x-request-id": requestId
+          }
+        );
+        logger.info({
+          event: "402_challenge_issued",
+          request_id: requestId,
+          adapter_trace_id: null,
+          endpoint: endpointPath,
+          entity_id: null,
+          code: "ENTITLEMENT_REQUIRED"
+        });
+        return;
+      }
       if (!contentTypeIsJson(req)) {
         sendJson(res, 415, { error: "content_type_must_be_application_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
@@ -763,23 +848,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         return;
       }
       const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers);
-      const normalized = normalizeTrustScoreRequest(body);
-      if (!normalized.entity_id) {
-        sendJson(
-          res,
-          400,
-          {
-            error: {
-              code: "INVALID_INPUT",
-              message: "entity_id (or subject_id/agent_id) is required."
-            }
-          },
-          { ...corsHeaders(), "x-request-id": requestId }
-        );
-        return;
-      }
-      const toolDef = findTool("resolve_trust");
-      const suppliedPayment = paymentFromHeaders(req.headers) || hasBodyPayment(body?.payment);
+      const suppliedPayment = headerPayment || hasBodyPayment(body?.payment);
       if (!suppliedPayment) {
         sendJson(
           res,
@@ -801,9 +870,24 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           request_id: requestId,
           adapter_trace_id: null,
           endpoint: endpointPath,
-          entity_id: normalized.entity_id,
+          entity_id: null,
           code: "ENTITLEMENT_REQUIRED"
         });
+        return;
+      }
+      const normalized = normalizeTrustScoreRequest(body);
+      if (!normalized.entity_id) {
+        sendJson(
+          res,
+          400,
+          {
+            error: {
+              code: "INVALID_INPUT",
+              message: "entity_id (or subject_id/agent_id) is required."
+            }
+          },
+          { ...corsHeaders(), "x-request-id": requestId }
+        );
         return;
       }
       const adapterTraceId = createAdapterTraceId();
@@ -842,7 +926,11 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           endpoint: endpointPath,
           entity_id: normalized.entity_id,
           billed_units: output?.meta?.billed_units ?? 0,
-          payment_receipt_id: output?.meta?.payment_receipt_id ?? null
+          payment_receipt_id: output?.meta?.payment_receipt_id ?? null,
+          facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator",
+          network: output?.meta?.x402_receipt?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
+          payTo: output?.meta?.x402_receipt?.payTo ?? config.x402PayTo ?? null,
+          price: output?.meta?.x402_receipt?.price ?? config.x402Price ?? config.x402PricePerUnitAtomic ?? null
         });
         if (output?.meta?.payment_receipt_id) {
           logger.info({
@@ -863,7 +951,13 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           trust_score: trustResponse.trust_score,
           confidence: trustResponse.confidence,
           status: trustResponse.route,
+          route: trustResponse.route,
+          risk_level: trustResponse.risk_level,
           receipt_id: trustResponse.receipt?.payment_receipt_id,
+          facilitator_provider: trustResponse.receipt?.facilitator_provider ?? config.x402FacilitatorProvider ?? "openfacilitator",
+          network: trustResponse.receipt?.network ?? null,
+          payTo: trustResponse.receipt?.payTo ?? config.x402PayTo ?? null,
+          price: trustResponse.receipt?.price ?? config.x402Price ?? config.x402PricePerUnitAtomic ?? null,
           reason: Array.isArray(trustResponse.reasons) && trustResponse.reasons.length > 0 ? trustResponse.reasons[0] : null
         });
         logger.info({

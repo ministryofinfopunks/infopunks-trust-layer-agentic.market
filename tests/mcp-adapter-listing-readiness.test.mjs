@@ -50,9 +50,14 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
       x402PricePerUnitAtomic: "10000",
       x402PaymentTimeoutSeconds: 300,
       x402Eip712Name: "USD Coin",
-      x402Eip712Version: "2"
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "openfacilitator"
     },
-    { pricing: { units: 2 } }
+    {
+      pricing: { units: 2 },
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" }
+    }
   );
 
   assert.equal(headers["x402-required"], "true");
@@ -66,6 +71,9 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
+  assert.equal(decoded.resource.extensions.bazaar.discoverable, true);
+  assert.ok(decoded.resource.inputSchema);
+  assert.ok(decoded.resource.outputSchema);
   assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
@@ -181,6 +189,7 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
     {
       INFOPUNKS_ENVIRONMENT: "local",
       X402_REQUIRED_DEFAULT: "false",
+      X402_FACILITATOR_PROVIDER: null,
       X402_ACCEPTED_ASSETS: null,
       X402_SUPPORTED_NETWORKS: null
     },
@@ -190,6 +199,70 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
   assert.deepEqual(config.x402AcceptedAssets, ["USDC"]);
   assert.deepEqual(config.x402SupportedNetworks, ["eip155:84532"]);
   assert.equal(config.x402VerifierUrl, "https://x402.org/facilitator");
+  assert.equal(config.x402FacilitatorProvider, "openfacilitator");
+});
+
+test("loadEnv validates CDP facilitator mode only when selected", () => {
+  const config = withEnv(
+    {
+      INFOPUNKS_ENVIRONMENT: "local",
+      X402_FACILITATOR_PROVIDER: "cdp",
+      X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      X402_NETWORK: "eip155:8453",
+      X402_SCHEME: "exact",
+      X402_ASSET: "USDC",
+      X402_PRICE: "0.01",
+      X402_PRICE_USD: null,
+      X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+      CDP_API_KEY_ID: "placeholder-key-id",
+      CDP_API_KEY_SECRET: "placeholder-secret"
+    },
+    () => loadEnv()
+  );
+
+  assert.equal(config.x402FacilitatorProvider, "cdp");
+  assert.equal(config.x402VerifierUrl, "https://api.cdp.coinbase.com/platform/v2/x402");
+  assert.equal(config.x402PaymentScheme, "exact");
+  assert.equal(config.x402PricePerUnitAtomic, "10000");
+});
+
+test("loadEnv does not require CDP credentials for default OpenFacilitator mode", () => {
+  const config = withEnv(
+    {
+      INFOPUNKS_ENVIRONMENT: "local",
+      X402_FACILITATOR_PROVIDER: null,
+      CDP_API_KEY_ID: null,
+      CDP_API_KEY_SECRET: null,
+      X402_REQUIRED_DEFAULT: "false"
+    },
+    () => loadEnv()
+  );
+
+  assert.equal(config.x402FacilitatorProvider, "openfacilitator");
+});
+
+test("loadEnv rejects CDP mode without CDP secrets", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_FACILITATOR_PROVIDER: "cdp",
+          X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          X402_NETWORK: "eip155:8453",
+          X402_SCHEME: "exact",
+          X402_ASSET: "USDC",
+          X402_PRICE: "0.01",
+          X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+          X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          CDP_API_KEY_ID: null,
+          CDP_API_KEY_SECRET: null
+        },
+        () => loadEnv()
+      ),
+    /CDP_API_KEY_ID is required/i
+  );
 });
 
 test("loadEnv enforces facilitator mode for deterministic payment flow", () => {

@@ -38,6 +38,8 @@ services:
         value: 0.0.0.0
       - key: X402_REQUIRED_DEFAULT
         value: "true"
+      - key: X402_FACILITATOR_PROVIDER
+        value: openfacilitator
       - key: X402_VERIFIER_MODE
         value: facilitator
       - key: X402_VERIFIER_URL

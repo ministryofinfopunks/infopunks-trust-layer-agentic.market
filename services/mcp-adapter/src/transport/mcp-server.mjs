@@ -50,6 +50,20 @@ function looksUnsafeDecision(result = {}) {
     || decision.includes("deny");
 }
 
+function riskLevelFromScore(score) {
+  const numeric = toNumeric(score);
+  if (numeric == null) {
+    return null;
+  }
+  if (numeric >= 80) {
+    return "low";
+  }
+  if (numeric >= 40) {
+    return "medium";
+  }
+  return "high";
+}
+
 function normalizeTimestamp(value) {
   if (value == null) {
     return null;
@@ -518,7 +532,13 @@ export class McpServer {
           mode: normalized?.mode ?? "verified",
           confidence: toNumeric(normalized?.confidence),
           status,
+          route: normalized?.policy?.route ?? normalized?.decision ?? status,
+          risk_level: normalized?.risk_level ?? riskLevelFromScore(normalized?.trust_score ?? normalized?.score),
           receipt_id: billing?.payment_receipt_id ?? null,
+          facilitator_provider: billing?.x402_receipt?.facilitator_provider ?? this.config.x402FacilitatorProvider ?? "openfacilitator",
+          network: billing?.x402_receipt?.network ?? (this.config.x402SupportedNetworks ?? [])[0] ?? null,
+          payTo: billing?.x402_receipt?.payTo ?? this.config.x402PayTo ?? null,
+          price: billing?.x402_receipt?.price ?? this.config.x402Price ?? this.config.x402PricePerUnitAtomic ?? null,
           amount: billing?.billed_units ?? toolDef.pricing?.units ?? 0,
           error_code: null,
           reason: firstReason(normalized)

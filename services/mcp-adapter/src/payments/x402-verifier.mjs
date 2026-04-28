@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { createCdpAuthHeaders } from "@coinbase/x402";
 
 function withTimeout(promise, timeoutMs) {
   const controller = new AbortController();
@@ -90,13 +91,35 @@ function localStrictVerify({ payment, requiredUnits, sharedSecret, fallbackPayer
 }
 
 export class X402Verifier {
-  constructor({ mode = "facilitator", verifierUrl, verifierApiKey, timeoutMs = 5000, sharedSecret, logger }) {
+  constructor({
+    mode = "facilitator",
+    facilitatorProvider = "openfacilitator",
+    verifierUrl,
+    verifierApiKey,
+    cdpApiKeyId,
+    cdpApiKeySecret,
+    timeoutMs = 5000,
+    sharedSecret,
+    logger
+  }) {
     this.mode = mode;
+    this.facilitatorProvider = facilitatorProvider;
     this.verifierUrl = verifierUrl;
     this.verifierApiKey = verifierApiKey;
+    this.cdpAuthHeaders = facilitatorProvider === "cdp"
+      ? createCdpAuthHeaders(cdpApiKeyId, cdpApiKeySecret)
+      : null;
     this.timeoutMs = timeoutMs;
     this.sharedSecret = sharedSecret;
     this.logger = logger;
+  }
+
+  async authHeaders(kind) {
+    if (this.facilitatorProvider === "cdp") {
+      const headers = await this.cdpAuthHeaders?.();
+      return headers?.[kind] ?? {};
+    }
+    return this.verifierApiKey ? { authorization: `Bearer ${this.verifierApiKey}` } : {};
   }
 
   async verify({ payment, requiredUnits, operation, fallbackPayer, adapterTraceId, entitlement }) {
@@ -121,6 +144,7 @@ export class X402Verifier {
       this.logger?.info?.({
         event: "x402_verify",
         mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
         operation,
         adapter_trace_id: adapterTraceId,
         outcome: "ok",
@@ -134,6 +158,7 @@ export class X402Verifier {
       this.logger?.info?.({
         event: "x402_verify",
         mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
         operation,
         adapter_trace_id: adapterTraceId,
         outcome: strict.ok ? "ok" : strict.reason,
@@ -165,14 +190,14 @@ export class X402Verifier {
           entitlement
         };
       const response = await withTimeout(
-        (signal) =>
+        async (signal) =>
           fetch(`${this.verifierUrl.replace(/\/$/, "")}/verify`, {
             method: "POST",
             signal,
             headers: {
               accept: "application/json",
               "content-type": "application/json",
-              ...(this.verifierApiKey ? { authorization: `Bearer ${this.verifierApiKey}` } : {})
+              ...(await this.authHeaders("verify"))
             },
             body: JSON.stringify(payload)
           }),
@@ -192,6 +217,7 @@ export class X402Verifier {
         this.logger?.warn?.({
           event: "x402_verify",
           mode: this.mode,
+          facilitator_provider: this.facilitatorProvider,
           operation,
           adapter_trace_id: adapterTraceId,
           outcome: error.reason,
@@ -238,6 +264,7 @@ export class X402Verifier {
       this.logger?.info?.({
         event: "x402_verify",
         mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
         operation,
         adapter_trace_id: adapterTraceId,
         outcome: result.ok ? "ok" : result.reason ?? "failed",
@@ -254,6 +281,7 @@ export class X402Verifier {
       this.logger?.warn?.({
         event: "x402_verify",
         mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
         operation,
         adapter_trace_id: adapterTraceId,
         outcome: failure.reason,
@@ -265,24 +293,30 @@ export class X402Verifier {
 
   async readiness(adapterTraceId = null) {
     if (this.mode === "stub") {
-      return { connected: true, mode: this.mode, reason: "stub_mode" };
+      return { connected: true, mode: this.mode, facilitator_provider: this.facilitatorProvider, reason: "stub_mode" };
     }
     if (this.mode === "strict") {
-      return { connected: Boolean(this.sharedSecret), mode: this.mode, reason: this.sharedSecret ? "shared_secret_configured" : "missing_shared_secret" };
+      return {
+        connected: Boolean(this.sharedSecret),
+        mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
+        reason: this.sharedSecret ? "shared_secret_configured" : "missing_shared_secret"
+      };
     }
     if (!this.verifierUrl) {
-      return { connected: false, mode: this.mode, reason: "missing_verifier_url" };
+      return { connected: false, mode: this.mode, facilitator_provider: this.facilitatorProvider, reason: "missing_verifier_url" };
     }
 
     try {
+      const readinessPath = this.facilitatorProvider === "cdp" ? "/supported" : "/health";
       const response = await withTimeout(
-        (signal) =>
-          fetch(`${this.verifierUrl.replace(/\/$/, "")}/health`, {
+        async (signal) =>
+          fetch(`${this.verifierUrl.replace(/\/$/, "")}${readinessPath}`, {
             method: "GET",
             signal,
             headers: {
               accept: "application/json",
-              ...(this.verifierApiKey ? { authorization: `Bearer ${this.verifierApiKey}` } : {}),
+              ...(await this.authHeaders(this.facilitatorProvider === "cdp" ? "supported" : "health")),
               ...(adapterTraceId ? { "x-adapter-trace-id": adapterTraceId } : {})
             }
           }),
@@ -291,30 +325,32 @@ export class X402Verifier {
       return {
         connected: response.status < 500,
         mode: this.mode,
-        reason: `health_status_${response.status}`
+        facilitator_provider: this.facilitatorProvider,
+        reason: `${this.facilitatorProvider === "cdp" ? "supported" : "health"}_status_${response.status}`
       };
     } catch {
       return {
         connected: false,
         mode: this.mode,
+        facilitator_provider: this.facilitatorProvider,
         reason: "health_probe_failed"
       };
     }
   }
 
   async getReceiptStatus(reference, adapterTraceId) {
-    if (!reference || !this.verifierUrl || this.mode === "stub") {
+    if (!reference || !this.verifierUrl || this.mode === "stub" || this.facilitatorProvider === "cdp") {
       return null;
     }
     try {
       const response = await withTimeout(
-        (signal) =>
+        async (signal) =>
           fetch(`${this.verifierUrl.replace(/\/$/, "")}/receipts/${encodeURIComponent(reference)}`, {
             method: "GET",
             signal,
             headers: {
               accept: "application/json",
-              ...(this.verifierApiKey ? { authorization: `Bearer ${this.verifierApiKey}` } : {}),
+              ...(await this.authHeaders("receipts")),
               ...(adapterTraceId ? { "x-adapter-trace-id": adapterTraceId } : {})
             }
           }),

@@ -112,6 +112,10 @@ function paidEventBase({
   idempotencyKey,
   requestHash,
   mode,
+  facilitatorProvider,
+  network = null,
+  payTo = null,
+  price = null,
   errorCode = null
 }) {
   return {
@@ -125,7 +129,11 @@ function paidEventBase({
     idempotency_key: idempotencyKey ?? null,
     request_hash: requestHash ?? null,
     error_code: errorCode,
-    mode: mode ?? null
+    mode: mode ?? null,
+    facilitator_provider: facilitatorProvider ?? null,
+    network,
+    payTo,
+    price
   };
 }
 
@@ -160,7 +168,10 @@ export class EntitlementService {
       nonce,
       idempotencyKey: guardMeta.idempotencyKey ?? null,
       requestHash: guardMeta.requestHash ?? null,
-      mode: guardMeta.mode ?? this.config.x402VerifierMode ?? null
+      mode: guardMeta.mode ?? this.config.x402VerifierMode ?? null,
+      facilitatorProvider: this.config.x402FacilitatorProvider ?? "openfacilitator",
+      payTo: this.config.x402PayTo ?? null,
+      price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null
     };
 
     if (requiredUnits === 0 || !this.config.x402RequiredDefault) {
@@ -184,6 +195,7 @@ export class EntitlementService {
     const acceptedAssets = this.config.x402AcceptedAssets ?? ["USDC"];
     const supportedNetworks = (this.config.x402SupportedNetworks ?? ["eip155:84532"]).map(normalizeNetwork).filter(Boolean);
     const effectiveNetwork = paymentNetwork ?? supportedNetworks[0] ?? "eip155:84532";
+    baseEvent.network = effectiveNetwork;
 
     if (this.config.x402RequirePaymentAsset && !paymentAssetRaw) {
       this.logger?.warn?.({
@@ -293,7 +305,10 @@ export class EntitlementService {
       metadata: {
         verifier_details: verification.details ?? {},
         settlement_status: verification.settlement_status ?? "provisional",
+        facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
         network: effectiveNetwork,
+        payTo: this.config.x402PayTo ?? null,
+        price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
         asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
       },
       spendLimitUnits: limit
@@ -337,7 +352,10 @@ export class EntitlementService {
       verifier_reference: receipt.verifier_reference,
       billed_units: requiredUnits,
       payer: receipt.payer,
+      facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
       network: effectiveNetwork,
+      payTo: this.config.x402PayTo ?? null,
+      price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
       asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
     });
     this.logger?.info?.({
@@ -357,7 +375,10 @@ export class EntitlementService {
       payer: receipt.payer,
       subject_id: subjectId ?? null,
       receipt_id: receipt.receipt_id,
+      facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
       network: effectiveNetwork,
+      payTo: this.config.x402PayTo ?? null,
+      price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
       asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
     });
     this.metrics?.inc?.("x402_billed_units_total", requiredUnits);
@@ -370,7 +391,10 @@ export class EntitlementService {
       x402_receipt: {
         ...receipt,
         x402_verified: true,
+        facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
         network: effectiveNetwork,
+        payTo: this.config.x402PayTo ?? null,
+        price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
         asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
       },
       spend_controls: await this.store.spendState(receipt.payer),

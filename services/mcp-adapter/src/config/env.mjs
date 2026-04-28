@@ -2,6 +2,7 @@ import path from "node:path";
 import os from "node:os";
 
 const ALLOWED_VERIFIER_MODES = new Set(["facilitator", "strict", "stub"]);
+const ALLOWED_FACILITATOR_PROVIDERS = new Set(["openfacilitator", "cdp"]);
 const ALLOWED_TRANSPORTS = new Set(["http", "stdio"]);
 const ALLOWED_STATE_STORE_DRIVERS = new Set(["sqlite", "postgres"]);
 const ALLOWED_IDENTITY_MAP_DRIVERS = new Set(["file", "postgres"]);
@@ -10,6 +11,7 @@ const BASE_MAINNET_CAIP2 = "eip155:8453";
 const BASE_SEPOLIA_CAIP2 = "eip155:84532";
 const BASE_MAINNET_USDC = "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913";
 const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const CDP_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -81,12 +83,12 @@ function usdToUsdcAtomic(value) {
     return null;
   }
   if (!/^\d+(\.\d{1,6})?$/.test(raw)) {
-    throw new Error("X402_PRICE_USD must be a positive decimal with at most 6 fractional digits.");
+    throw new Error("X402_PRICE or X402_PRICE_USD must be a positive decimal with at most 6 fractional digits.");
   }
   const [whole, fraction = ""] = raw.split(".");
   const atomic = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
   if (atomic <= 0n) {
-    throw new Error("X402_PRICE_USD must be greater than zero.");
+    throw new Error("X402_PRICE or X402_PRICE_USD must be greater than zero.");
   }
   return atomic.toString();
 }
@@ -130,6 +132,10 @@ function resolveInternalServiceToken() {
 }
 
 function validateConfig(config) {
+  if (!ALLOWED_FACILITATOR_PROVIDERS.has(config.x402FacilitatorProvider)) {
+    throw new Error(`X402_FACILITATOR_PROVIDER must be one of: ${Array.from(ALLOWED_FACILITATOR_PROVIDERS).join(", ")}.`);
+  }
+
   if (isNonEmptyString(config.x402VerifierModeRequested) && config.x402VerifierModeRequested !== "facilitator") {
     throw new Error("X402_VERIFIER_MODE must be facilitator for deterministic x402 settlement flow.");
   }
@@ -231,14 +237,15 @@ function validateConfig(config) {
     if (containsUnsafeProductionMarker(config.backendBaseUrl) || containsUnsafeProductionMarker(config.x402VerifierUrl)) {
       throw new Error("Production URLs cannot contain localhost, Sepolia, mock, or relaxed markers.");
     }
-    if (String(config.x402NetworkRaw ?? "").trim().toLowerCase() !== "base") {
-      throw new Error("X402_NETWORK=base is required for production mainnet deployment.");
+    const normalizedProductionNetwork = normalizeX402Network(config.x402NetworkRaw);
+    if (normalizedProductionNetwork !== BASE_MAINNET_CAIP2) {
+      throw new Error("X402_NETWORK=base or X402_NETWORK=eip155:8453 is required for production mainnet deployment.");
     }
     if (String(config.x402AssetRaw ?? "").trim().toUpperCase() !== "USDC") {
       throw new Error("X402_ASSET=USDC is required for production mainnet deployment.");
     }
     if (!isNonEmptyString(config.x402PriceUsd)) {
-      throw new Error("X402_PRICE_USD is required for production mainnet deployment.");
+      throw new Error("X402_PRICE or X402_PRICE_USD is required for production mainnet deployment.");
     }
     if (!isNonEmptyString(config.x402PayTo)) {
       throw new Error("X402_PAY_TO is required for production mainnet deployment.");
@@ -287,6 +294,35 @@ function validateConfig(config) {
 
   if (config.x402RequiredDefault && config.x402VerifierMode === "facilitator" && !isNonEmptyString(config.x402VerifierUrl)) {
     throw new Error("X402_VERIFIER_URL is required when X402_REQUIRED_DEFAULT=true and X402_VERIFIER_MODE=facilitator.");
+  }
+  if (config.x402FacilitatorProvider === "cdp") {
+    if (!config.x402FacilitatorUrlExplicit) {
+      throw new Error(`X402_FACILITATOR_URL=${CDP_FACILITATOR_URL} is required when X402_FACILITATOR_PROVIDER=cdp.`);
+    }
+    if (String(config.x402VerifierUrl ?? "").replace(/\/$/, "") !== CDP_FACILITATOR_URL) {
+      throw new Error(`X402_FACILITATOR_URL=${CDP_FACILITATOR_URL} is required when X402_FACILITATOR_PROVIDER=cdp.`);
+    }
+    if (normalizeX402Network(config.x402NetworkRaw) !== BASE_MAINNET_CAIP2) {
+      throw new Error("X402_NETWORK=eip155:8453 is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (config.x402PaymentSchemeSource !== "X402_SCHEME" || String(config.x402PaymentScheme ?? "").trim().toLowerCase() !== "exact") {
+      throw new Error("X402_SCHEME=exact is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (String(config.x402AssetRaw ?? "").trim().toUpperCase() !== "USDC") {
+      throw new Error("X402_ASSET=USDC is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (config.x402PriceSource !== "X402_PRICE" || !isNonEmptyString(config.x402Price)) {
+      throw new Error("X402_PRICE is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (!isNonEmptyString(config.x402PayTo)) {
+      throw new Error("X402_PAY_TO is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (!isNonEmptyString(config.cdpApiKeyId)) {
+      throw new Error("CDP_API_KEY_ID is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    if (!isNonEmptyString(config.cdpApiKeySecret)) {
+      throw new Error("CDP_API_KEY_SECRET is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
   }
   if (config.x402RequiredDefault) {
     if (!isHexAddress(config.x402PaymentAssetAddress)) {
@@ -399,6 +435,7 @@ export function loadEnv() {
   const environment = process.env.INFOPUNKS_ENVIRONMENT ?? (nodeEnv === "production" ? "production" : "local");
   const adapterRuntimeDir = defaultAdapterRuntimeDir(environment);
   const x402VerifierModeRequested = process.env.X402_VERIFIER_MODE ?? "facilitator";
+  const x402FacilitatorProvider = String(process.env.X402_FACILITATOR_PROVIDER ?? "openfacilitator").trim().toLowerCase();
   const internalServiceTokenExplicitlyConfigured = isNonEmptyString(process.env.INFOPUNKS_INTERNAL_SERVICE_TOKEN);
   const defaultBackendBaseUrl = (environment === "local" || environment === "test")
     ? "http://127.0.0.1:4010"
@@ -416,8 +453,11 @@ export function loadEnv() {
     : (isNonEmptyString(process.env.MCP_ADAPTER_PUBLIC_URL) ? process.env.MCP_ADAPTER_PUBLIC_URL.trim() : null);
   const x402NetworkRaw = process.env.X402_NETWORK ?? null;
   const x402AssetRaw = process.env.X402_ASSET ?? null;
-  const x402PriceUsd = process.env.X402_PRICE_USD ?? null;
-  const x402PriceFromUsd = usdToUsdcAtomic(x402PriceUsd);
+  const x402PriceSource = isNonEmptyString(process.env.X402_PRICE)
+    ? "X402_PRICE"
+    : (isNonEmptyString(process.env.X402_PRICE_USD) ? "X402_PRICE_USD" : null);
+  const x402Price = x402PriceSource === "X402_PRICE" ? process.env.X402_PRICE : (process.env.X402_PRICE_USD ?? null);
+  const x402PriceFromUsd = usdToUsdcAtomic(x402Price);
   const x402SupportedNetworks = (x402NetworkRaw != null
     ? [normalizeX402Network(x402NetworkRaw)]
     : (process.env.X402_SUPPORTED_NETWORKS ?? BASE_SEPOLIA_CAIP2)
@@ -429,7 +469,16 @@ export function loadEnv() {
     .filter(Boolean);
   const x402PaymentAssetAddress = process.env.X402_PAYMENT_ASSET_ADDRESS
     ?? (x402SupportedNetworks.includes(BASE_MAINNET_CAIP2) ? BASE_MAINNET_USDC : BASE_SEPOLIA_USDC);
-  const x402FacilitatorUrl = process.env.X402_FACILITATOR_URL ?? process.env.X402_VERIFIER_URL ?? null;
+  const x402FacilitatorUrlExplicit = isNonEmptyString(process.env.X402_FACILITATOR_URL);
+  const x402FacilitatorUrl = (process.env.X402_FACILITATOR_URL
+    ?? process.env.X402_VERIFIER_URL
+    ?? (x402FacilitatorProvider === "cdp" ? CDP_FACILITATOR_URL : null))
+    ?.trim()
+    .replace(/\/$/, "") ?? null;
+
+  const x402PaymentSchemeSource = isNonEmptyString(process.env.X402_SCHEME)
+    ? "X402_SCHEME"
+    : (isNonEmptyString(process.env.X402_PAYMENT_SCHEME) ? "X402_PAYMENT_SCHEME" : null);
 
   const config = {
     nodeEnv,
@@ -446,24 +495,31 @@ export function loadEnv() {
     publicUrl: publicBaseUrl,
     publicBaseUrl,
     logLevel: process.env.MCP_ADAPTER_LOG_LEVEL ?? "info",
+    x402FacilitatorProvider,
     x402VerifierModeRequested,
     x402VerifierMode: "facilitator",
     x402AllowStubMode: String(process.env.X402_ALLOW_STUB_MODE ?? "false") === "true",
     x402RequiredDefault: String(process.env.X402_REQUIRED_DEFAULT ?? "true") === "true",
     x402VerifierUrl: x402FacilitatorUrl ?? "https://x402.org/facilitator",
     x402FacilitatorUrl,
+    x402FacilitatorUrlExplicit,
     x402VerifierApiKey: process.env.X402_VERIFIER_API_KEY ?? null,
+    cdpApiKeyId: process.env.CDP_API_KEY_ID ?? null,
+    cdpApiKeySecret: process.env.CDP_API_KEY_SECRET ?? null,
     x402VerifierTimeoutMs: Number(process.env.X402_VERIFIER_TIMEOUT_MS ?? 5000),
     x402ReplayWindowSeconds: Number(process.env.X402_REPLAY_WINDOW_SECONDS ?? 900),
     x402ReplayStrict: String(process.env.X402_REPLAY_STRICT ?? "true") === "true",
     x402NetworkRaw,
     x402AssetRaw,
-    x402PriceUsd,
+    x402Price,
+    x402PriceUsd: x402Price,
+    x402PriceSource,
     allowTestnet: parseBooleanEnv("ALLOW_TESTNET", true),
     allowRelaxedPayment: parseBooleanEnv("ALLOW_RELAXED_PAYMENT", false),
     x402AcceptedAssets,
     x402SupportedNetworks,
-    x402PaymentScheme: process.env.X402_PAYMENT_SCHEME ?? "exact",
+    x402PaymentScheme: process.env.X402_SCHEME ?? process.env.X402_PAYMENT_SCHEME ?? "exact",
+    x402PaymentSchemeSource,
     x402PaymentAssetAddress,
     x402PayTo: process.env.X402_PAY_TO ?? "",
     x402PricePerUnitAtomic: process.env.X402_PRICE_PER_UNIT_ATOMIC ?? x402PriceFromUsd ?? "10000",

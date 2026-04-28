@@ -45,7 +45,16 @@ paths:
   /v1/resolve-trust:
     post:
       summary: Resolve trust with x402 payment gating
-      description: Unpaid requests return 402. Paid requests return 200 with receipt metadata.
+      description: Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and risk context.
+      extensions:
+        bazaar:
+          discoverable: true
+          category: infrastructure
+          tags: [trust, reputation, routing, agent-security, x402, ai-agents, risk, coordination]
+      x-bazaar:
+        discoverable: true
+        category: infrastructure
+        tags: [trust, reputation, routing, agent-security, x402, ai-agents, risk, coordination]
       requestBody:
         required: true
         content:
@@ -111,6 +120,16 @@ paths:
                           type: number
                         status:
                           type: string
+                        facilitator_provider:
+                          type: string
+                        network:
+                          type: string
+                        payTo:
+                          type: string
+                        price:
+                          type: string
+                        risk_level:
+                          type: string
                         receipt_id:
                           type: string
                         reason:
@@ -153,9 +172,15 @@ components:
           properties:
             x402_verified:
               type: boolean
+            facilitator_provider:
+              type: string
             network:
               type: string
             asset:
+              type: string
+            payTo:
+              type: string
+            price:
               type: string
             payment_receipt_id:
               type: string
