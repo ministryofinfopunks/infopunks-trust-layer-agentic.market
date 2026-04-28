@@ -118,6 +118,57 @@ test("challengeHeaders keep explicit Base Sepolia alias for testnet proof", () =
   assert.equal(headers["x402-supported-networks"], "eip155:84532");
 });
 
+test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet USDC", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "cdp"
+    },
+    { pricing: { units: 1 } }
+  );
+
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.equal(decoded.accepts[0].extra.name, "USD Coin");
+  assert.equal(decoded.accepts[0].extra.version, "2");
+  assert.equal(decoded.accepts[0].extra.symbol, "USDC");
+});
+
+test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "cdp"
+    },
+    { pricing: { units: 1 } }
+  );
+
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.notEqual(decoded.accepts[0].extra.name, "USDC");
+  assert.equal(decoded.accepts[0].extra.name, "USD Coin");
+});
+
 test("trust-score helper mapping emits commercial response format", () => {
   const request = __testOnly.normalizeTrustScoreRequest({
     entity_id: "agent_221",
@@ -212,6 +263,8 @@ test("loadEnv validates CDP facilitator mode only when selected", () => {
       X402_NETWORK: "eip155:8453",
       X402_SCHEME: "exact",
       X402_ASSET: "USDC",
+      X402_EIP712_NAME: "USD Coin",
+      X402_EIP712_VERSION: "2",
       X402_PRICE: "0.01",
       X402_PRICE_USD: null,
       X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
@@ -226,6 +279,31 @@ test("loadEnv validates CDP facilitator mode only when selected", () => {
   assert.equal(config.x402VerifierUrl, "https://api.cdp.coinbase.com/platform/v2/x402");
   assert.equal(config.x402PaymentScheme, "exact");
   assert.equal(config.x402PricePerUnitAtomic, "10000");
+});
+
+test("loadEnv rejects cdp base mainnet usdc when X402_EIP712_NAME is USDC", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_FACILITATOR_PROVIDER: "cdp",
+          X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          X402_NETWORK: "eip155:8453",
+          X402_SCHEME: "exact",
+          X402_ASSET: "USDC",
+          X402_EIP712_NAME: "USDC",
+          X402_EIP712_VERSION: "2",
+          X402_PRICE: "0.01",
+          X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+          X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          CDP_API_KEY_ID: "placeholder-key-id",
+          CDP_API_KEY_SECRET: "placeholder-secret"
+        },
+        () => loadEnv()
+      ),
+    /X402_EIP712_NAME=USD Coin is required/i
+  );
 });
 
 test("loadEnv does not require CDP credentials for default OpenFacilitator mode", () => {

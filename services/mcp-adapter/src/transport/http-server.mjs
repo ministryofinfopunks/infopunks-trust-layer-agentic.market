@@ -127,15 +127,33 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
     fallbackName: config.x402Eip712Name,
     fallbackVersion: config.x402Eip712Version
   });
+  const facilitatorProvider = String(config.x402FacilitatorProvider ?? "openfacilitator").trim().toLowerCase();
+  const preferredSymbol = String((config.x402AcceptedAssets ?? [])[0] ?? "").trim().toUpperCase();
+  const configuredEip712Name = String(config.x402Eip712Name ?? "").trim();
+  const configuredEip712Version = String(config.x402Eip712Version ?? "").trim();
   const extra = {};
-  if (tokenMetadata.name) {
-    extra.name = tokenMetadata.name;
-  }
-  if (tokenMetadata.version) {
-    extra.version = tokenMetadata.version;
-  }
-  if (tokenMetadata.symbol) {
-    extra.symbol = tokenMetadata.symbol;
+  if (facilitatorProvider === "cdp") {
+    if (configuredEip712Name) {
+      extra.name = configuredEip712Name;
+    }
+    if (configuredEip712Version) {
+      extra.version = configuredEip712Version;
+    }
+    if (preferredSymbol) {
+      extra.symbol = preferredSymbol;
+    } else if (tokenMetadata.symbol) {
+      extra.symbol = tokenMetadata.symbol;
+    }
+  } else {
+    if (tokenMetadata.name) {
+      extra.name = tokenMetadata.name;
+    }
+    if (tokenMetadata.version) {
+      extra.version = tokenMetadata.version;
+    }
+    if (tokenMetadata.symbol) {
+      extra.symbol = tokenMetadata.symbol;
+    }
   }
 
   return {

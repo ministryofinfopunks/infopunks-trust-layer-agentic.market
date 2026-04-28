@@ -11,6 +11,7 @@ const BASE_MAINNET_CAIP2 = "eip155:8453";
 const BASE_SEPOLIA_CAIP2 = "eip155:84532";
 const BASE_MAINNET_USDC = "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913";
 const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const BASE_MAINNET_USDC_EIP712_NAME = "USD Coin";
 const CDP_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
 
 function isNonEmptyString(value) {
@@ -322,6 +323,15 @@ function validateConfig(config) {
     }
     if (!isNonEmptyString(config.cdpApiKeySecret)) {
       throw new Error("CDP_API_KEY_SECRET is required when X402_FACILITATOR_PROVIDER=cdp.");
+    }
+    const normalizedCdpNetwork = normalizeX402Network(config.x402NetworkRaw);
+    const normalizedCdpAssetAddress = String(config.x402PaymentAssetAddress ?? "").toLowerCase();
+    if (normalizedCdpNetwork === BASE_MAINNET_CAIP2 && normalizedCdpAssetAddress === BASE_MAINNET_USDC.toLowerCase()) {
+      if (String(config.x402Eip712Name ?? "").trim() !== BASE_MAINNET_USDC_EIP712_NAME) {
+        throw new Error(
+          `X402_EIP712_NAME=${BASE_MAINNET_USDC_EIP712_NAME} is required for Base mainnet USDC when X402_FACILITATOR_PROVIDER=cdp.`
+        );
+      }
     }
   }
   if (config.x402RequiredDefault) {
