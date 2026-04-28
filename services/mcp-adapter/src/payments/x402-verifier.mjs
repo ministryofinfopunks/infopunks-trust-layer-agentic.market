@@ -1,6 +1,9 @@
 import { createHmac } from "node:crypto";
 import { createCdpAuthHeaders } from "@coinbase/x402";
 
+const CDP_EXTENSION_RESPONSES_HEADER = "EXTENSION-RESPONSES";
+const KNOWN_EXTENSION_STATUSES = new Set(["processing", "accepted", "rejected", "error"]);
+
 function withTimeout(promise, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -199,6 +202,221 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
   });
 }
 
+function sanitizeExtensionText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeExtensionStatus(value) {
+  const normalized = sanitizeExtensionText(value)?.toLowerCase() ?? null;
+  return normalized && KNOWN_EXTENSION_STATUSES.has(normalized) ? normalized : null;
+}
+
+function splitStructuredHeader(value) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  let quote = null;
+  for (const char of value) {
+    if (quote) {
+      current += char;
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+    if (char === "," && depth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) {
+        parts.push(trimmed);
+      }
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  const trimmed = current.trim();
+  if (trimmed) {
+    parts.push(trimmed);
+  }
+  return parts;
+}
+
+function unquoteStructuredValue(value) {
+  const trimmed = sanitizeExtensionText(value);
+  if (!trimmed) {
+    return null;
+  }
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim() || null;
+  }
+  return trimmed;
+}
+
+function normalizeExtensionEntry(entry, fallbackName = null) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return null;
+  }
+  const extensionName = sanitizeExtensionText(
+    entry.extension_name
+    ?? entry.extension
+    ?? entry.name
+    ?? entry.id
+    ?? fallbackName
+  );
+  const status = normalizeExtensionStatus(entry.status ?? entry.state ?? entry.result ?? entry.outcome);
+  const reason = sanitizeExtensionText(entry.reason);
+  const message = sanitizeExtensionText(entry.message ?? entry.error ?? entry.detail);
+  if (!extensionName && !status && !reason && !message) {
+    return null;
+  }
+  return {
+    ...(extensionName ? { extension_name: extensionName } : {}),
+    ...(status ? { status } : {}),
+    ...(reason ? { reason } : {}),
+    ...(message ? { message } : {})
+  };
+}
+
+function parseStructuredExtensionEntries(value) {
+  return splitStructuredHeader(value)
+    .map((segment) => {
+      const tokens = segment.split(/[;|]/).map((token) => token.trim()).filter(Boolean);
+      const fields = {};
+      const bareTokens = [];
+      for (const token of tokens) {
+        const match = token.match(/^([^=:]+)\s*[:=]\s*(.+)$/);
+        if (!match) {
+          bareTokens.push(unquoteStructuredValue(token));
+          continue;
+        }
+        const key = match[1].trim().toLowerCase().replace(/[\s-]+/g, "_");
+        fields[key] = unquoteStructuredValue(match[2]);
+      }
+      const bareStatus = bareTokens.find((token) => normalizeExtensionStatus(token));
+      const bareName = bareTokens.find((token) => token && !normalizeExtensionStatus(token));
+      return normalizeExtensionEntry({
+        extension_name: fields.extension_name ?? fields.extension ?? fields.name ?? fields.id ?? bareName,
+        status: fields.status ?? fields.state ?? fields.result ?? fields.outcome ?? bareStatus,
+        reason: fields.reason,
+        message: fields.message ?? fields.error ?? fields.detail
+      });
+    })
+    .filter(Boolean);
+}
+
+function normalizeExtensionEntries(value, fallbackName = null) {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => normalizeExtensionEntries(entry, fallbackName));
+  }
+  if (typeof value === "string") {
+    return parseStructuredExtensionEntries(value);
+  }
+  if (typeof value !== "object") {
+    return [];
+  }
+
+  const nested = value.extensions
+    ?? value.extensionResponses
+    ?? value.extension_responses
+    ?? value.responses
+    ?? value.results
+    ?? value.items
+    ?? value.data;
+  if (nested) {
+    const normalizedNested = normalizeExtensionEntries(nested, fallbackName);
+    if (normalizedNested.length) {
+      return normalizedNested;
+    }
+  }
+
+  const directEntry = normalizeExtensionEntry(value, fallbackName);
+  if (
+    directEntry
+    && (
+      Object.hasOwn(value, "status")
+      || Object.hasOwn(value, "state")
+      || Object.hasOwn(value, "result")
+      || Object.hasOwn(value, "outcome")
+      || Object.hasOwn(value, "reason")
+      || Object.hasOwn(value, "message")
+      || Object.hasOwn(value, "error")
+      || Object.hasOwn(value, "detail")
+    )
+  ) {
+    return [directEntry];
+  }
+
+  const nestedEntries = [];
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (nestedValue && typeof nestedValue === "object") {
+      nestedEntries.push(...normalizeExtensionEntries(nestedValue, key));
+    }
+  }
+  if (nestedEntries.length) {
+    return nestedEntries;
+  }
+
+  return directEntry ? [directEntry] : [];
+}
+
+function parseExtensionResponsesHeader(headerValue) {
+  const sanitized = sanitizeExtensionText(headerValue);
+  if (!sanitized) {
+    return [];
+  }
+  if (sanitized.startsWith("{") || sanitized.startsWith("[")) {
+    try {
+      return normalizeExtensionEntries(JSON.parse(sanitized));
+    } catch {
+      return parseStructuredExtensionEntries(sanitized);
+    }
+  }
+  return parseStructuredExtensionEntries(sanitized);
+}
+
+function logCdpExtensionResponses({ logger, phase, response, adapterTraceId = null }) {
+  const headerValue = sanitizeExtensionText(
+    response?.headers?.get?.(CDP_EXTENSION_RESPONSES_HEADER)
+    ?? response?.headers?.get?.(CDP_EXTENSION_RESPONSES_HEADER.toLowerCase())
+  );
+  const extensionResponses = parseExtensionResponsesHeader(headerValue);
+  logger?.info?.({
+    event: "cdp_extension_responses",
+    phase,
+    adapter_trace_id: adapterTraceId,
+    cdp_status: response?.status ?? null,
+    extension_responses_header_present: headerValue !== null,
+    extension_responses_header_value: headerValue,
+    extension_responses_count: extensionResponses.length,
+    ...(extensionResponses.length ? { extension_responses: extensionResponses } : {})
+  });
+}
+
 function localStrictVerify({ payment, requiredUnits, sharedSecret, fallbackPayer }) {
   const rail = payment?.rail ?? "x402";
   const payer = payment?.payer ?? fallbackPayer ?? "anonymous";
@@ -389,6 +607,14 @@ export class X402Verifier {
           }),
         this.timeoutMs
       );
+      if (this.facilitatorProvider === "cdp") {
+        logCdpExtensionResponses({
+          logger: this.logger,
+          phase: "verify",
+          response,
+          adapterTraceId
+        });
+      }
 
       const responseBody = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -566,6 +792,12 @@ export class X402Verifier {
           }),
         this.timeoutMs
       );
+      logCdpExtensionResponses({
+        logger: this.logger,
+        phase: "settle",
+        response,
+        adapterTraceId
+      });
       const responseBody = await response.json().catch(() => ({}));
       if (!response.ok) {
         return {

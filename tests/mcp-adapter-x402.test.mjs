@@ -288,6 +288,7 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   let postedVerifyBody = null;
   let postedSettleBody = null;
   const cdpShapeLogs = [];
+  const cdpExtensionLogs = [];
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init?.body ?? "{}");
     if (String(url).endsWith("/verify")) {
@@ -300,7 +301,18 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
         }),
         {
           status: 200,
-          headers: { "content-type": "application/json" }
+          headers: {
+            "content-type": "application/json",
+            "EXTENSION-RESPONSES": JSON.stringify({
+              extensions: [
+                {
+                  name: "bazaar",
+                  status: "accepted",
+                  message: "discovery metadata accepted"
+                }
+              ]
+            })
+          }
         }
       );
     }
@@ -313,7 +325,10 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
         }),
         {
           status: 200,
-          headers: { "content-type": "application/json" }
+          headers: {
+            "content-type": "application/json",
+            "EXTENSION-RESPONSES": "extension=bazaar;status=processing;reason=awaiting indexing"
+          }
         }
       );
     }
@@ -340,6 +355,9 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
       info(payload) {
         if (payload?.event === "cdp_facilitator_payload_shape") {
           cdpShapeLogs.push(payload);
+        }
+        if (payload?.event === "cdp_extension_responses") {
+          cdpExtensionLogs.push(payload);
         }
       },
       warn() {},
@@ -437,6 +455,37 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   assert.equal(verifyShapeLog.req_extra_name, "USDC");
   assert.equal(verifyShapeLog.req_extra_version, "2");
   assert.equal(verifyShapeLog.req_extra_symbol, "USDC");
+
+  const verifyExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "verify");
+  const settleExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "settle");
+  assert.ok(verifyExtensionLog);
+  assert.ok(settleExtensionLog);
+  assert.equal(verifyExtensionLog.cdp_status, 200);
+  assert.equal(verifyExtensionLog.extension_responses_header_present, true);
+  assert.equal(
+    verifyExtensionLog.extension_responses_header_value,
+    "{\"extensions\":[{\"name\":\"bazaar\",\"status\":\"accepted\",\"message\":\"discovery metadata accepted\"}]}"
+  );
+  assert.deepEqual(verifyExtensionLog.extension_responses, [
+    {
+      extension_name: "bazaar",
+      status: "accepted",
+      message: "discovery metadata accepted"
+    }
+  ]);
+  assert.equal(settleExtensionLog.cdp_status, 200);
+  assert.equal(settleExtensionLog.extension_responses_header_present, true);
+  assert.equal(
+    settleExtensionLog.extension_responses_header_value,
+    "extension=bazaar;status=processing;reason=awaiting indexing"
+  );
+  assert.deepEqual(settleExtensionLog.extension_responses, [
+    {
+      extension_name: "bazaar",
+      status: "processing",
+      reason: "awaiting indexing"
+    }
+  ]);
 
   assert.equal(result.ok, true);
   assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");

@@ -8,31 +8,43 @@ import { toMcpToolError } from "../middleware/error-handler.mjs";
 const MAX_BODY_BYTES = 1024 * 1024;
 const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
 const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
+const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
+  subject_id: "agent_public_paid_proof",
+  context: {
+    action: "execute_task",
+    domain: "agentic_market",
+    capital_at_risk_usd: 1000
+  }
+};
+const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
+  subject_id: "agent_public_paid_proof",
+  trust_score: 40,
+  risk_level: "medium",
+  route: "allow",
+  status: "allow"
+};
+const RESOLVE_TRUST_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    subject_id: { type: "string" },
+    trust_score: { type: "number" },
+    risk_level: { type: "string" },
+    route: { type: "string" },
+    status: { type: "string" }
+  },
+  required: ["subject_id", "trust_score", "route"]
+};
 const RESOLVE_TRUST_BAZAAR_EXTENSION = {
   info: {
     input: {
       type: "http",
       method: "POST",
-      path: "/v1/resolve-trust",
-      contentType: "application/json",
-      body: {
-        subject_id: "agent_public_paid_proof",
-        context: {
-          action: "execute_task",
-          domain: "agentic_market",
-          capital_at_risk_usd: 1000
-        }
-      }
+      bodyType: "json",
+      body: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE
     },
     output: {
       type: "json",
-      example: {
-        subject_id: "agent_public_paid_proof",
-        trust_score: 40,
-        risk_level: "medium",
-        route: "allow",
-        status: "allow"
-      }
+      example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE
     },
     tags: RESOLVE_TRUST_BAZAAR_TAGS,
     category: "infrastructure"
@@ -41,15 +53,42 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
     properties: {
-      input: { type: "object" },
-      output: { type: "object" },
+      input: {
+        type: "object",
+        properties: {
+          type: { type: "string", const: "http" },
+          method: { type: "string", enum: ["POST"] },
+          bodyType: { type: "string", enum: ["json"] },
+          body: {
+            type: "object",
+            properties: {
+              subject_id: { type: "string" },
+              context: { type: "object" }
+            },
+            required: ["subject_id"],
+            additionalProperties: false
+          }
+        },
+        required: ["type", "method", "bodyType", "body"],
+        additionalProperties: false
+      },
+      output: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["json"] },
+          example: RESOLVE_TRUST_RESPONSE_SCHEMA
+        },
+        required: ["example"],
+        additionalProperties: false
+      },
       tags: {
         type: "array",
         items: { type: "string" }
       },
       category: { type: "string" }
     },
-    required: ["input", "output"]
+    required: ["input"],
+    additionalProperties: false
   }
 };
 
@@ -156,6 +195,124 @@ function resourceUrl(config, resourcePath) {
   return `${origin.replace(/\/$/, "")}${resourcePath}`;
 }
 
+function routeOutputSchema(resourcePath, toolDef) {
+  if (resourcePath === "/v1/resolve-trust") {
+    return RESOLVE_TRUST_RESPONSE_SCHEMA;
+  }
+  return toolDef?.outputSchema ?? undefined;
+}
+
+function routeDescription(resourcePath, toolDef) {
+  return resourcePath === "/v1/resolve-trust"
+    ? RESOLVE_TRUST_BAZAAR_DESCRIPTION
+    : (toolDef?.description ?? "Paid Infopunks endpoint");
+}
+
+function routeExtensions(resourcePath) {
+  if (resourcePath === "/v1/resolve-trust") {
+    return { bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION };
+  }
+  return {};
+}
+
+function routeResourceMetadata(config, toolDef, resourcePath) {
+  const url = resourceUrl(config, resourcePath);
+  return {
+    resource: url,
+    url,
+    description: routeDescription(resourcePath, toolDef),
+    mimeType: "application/json",
+    inputSchema: toolDef?.inputSchema ?? undefined,
+    outputSchema: routeOutputSchema(resourcePath, toolDef),
+    extensions: routeExtensions(resourcePath)
+  };
+}
+
+function validateJsonSchema(value, schema, path = "$") {
+  const errors = [];
+  if (!schema || typeof schema !== "object") {
+    return errors;
+  }
+
+  if (Object.hasOwn(schema, "const") && value !== schema.const) {
+    errors.push(`${path} should equal ${JSON.stringify(schema.const)}`);
+    return errors;
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errors.push(`${path} should be one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
+    return errors;
+  }
+
+  if (schema.type === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${path} should be object`);
+      return errors;
+    }
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    for (const key of required) {
+      if (!Object.hasOwn(value, key)) {
+        errors.push(`${path}.${key} is required`);
+      }
+    }
+    const properties = schema.properties ?? {};
+    for (const [key, childSchema] of Object.entries(properties)) {
+      if (Object.hasOwn(value, key)) {
+        errors.push(...validateJsonSchema(value[key], childSchema, `${path}.${key}`));
+      }
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(properties, key)) {
+          errors.push(`${path}.${key} is not allowed`);
+        }
+      }
+    }
+    return errors;
+  }
+
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) {
+      errors.push(`${path} should be array`);
+      return errors;
+    }
+    if (schema.items) {
+      value.forEach((item, index) => {
+        errors.push(...validateJsonSchema(item, schema.items, `${path}[${index}]`));
+      });
+    }
+    return errors;
+  }
+
+  if (schema.type === "string") {
+    if (typeof value !== "string") {
+      errors.push(`${path} should be string`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "number") {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      errors.push(`${path} should be number`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "integer") {
+    if (!Number.isInteger(value)) {
+      errors.push(`${path} should be integer`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "boolean") {
+    if (typeof value !== "boolean") {
+      errors.push(`${path} should be boolean`);
+    }
+  }
+
+  return errors;
+}
+
 function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   const units = Number(toolDef?.pricing?.units ?? 0);
   const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
@@ -199,18 +356,7 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   return {
     x402Version: 2,
     error: "Payment required",
-    resource: {
-      url: resourceUrl(config, resourcePath),
-      description: resourcePath === "/v1/resolve-trust"
-        ? RESOLVE_TRUST_BAZAAR_DESCRIPTION
-        : (toolDef?.description ?? "Paid Infopunks endpoint"),
-      mimeType: "application/json",
-      inputSchema: toolDef?.inputSchema ?? undefined,
-      outputSchema: toolDef?.outputSchema ?? undefined,
-      extensions: {
-        bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
-      }
-    },
+    resource: routeResourceMetadata(config, toolDef, resourcePath),
     accepts: [
       {
         scheme: config.x402PaymentScheme ?? "exact",
@@ -552,6 +698,7 @@ function toResolveTrustV1Response(request, toolOutput, config) {
     risk_level: trustResponse.risk_level,
     confidence: trustResponse.confidence,
     route: trustResponse.policy.route,
+    status: trustResponse.policy.route,
     reasons: reasonsFromResult(result),
     receipt: {
       x402_verified: Boolean(toolOutput?.meta?.payment_receipt_id),
@@ -584,14 +731,7 @@ function buildInfopunksTrustLayerManifest(config) {
     resources: {
       resolve_trust: {
         method: "POST",
-        url: `${origin}/v1/resolve-trust`,
-        description: RESOLVE_TRUST_BAZAAR_DESCRIPTION,
-        mimeType: "application/json",
-        inputSchema: resolveTrustTool?.inputSchema ?? null,
-        outputSchema: resolveTrustTool?.outputSchema ?? null,
-        extensions: {
-          bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
-        }
+        ...routeResourceMetadata(config, resolveTrustTool, "/v1/resolve-trust")
       }
     },
     payment: {
@@ -757,11 +897,8 @@ function buildOpenApiJson(origin, config) {
         ResolveTrustResponse: {
           type: "object",
           properties: {
-            subject_id: { type: "string" },
-            trust_score: { type: "number" },
-            risk_level: { type: "string" },
+            ...RESOLVE_TRUST_RESPONSE_SCHEMA.properties,
             confidence: { type: "number" },
-            route: { type: "string" },
             reasons: { type: "array", items: { type: "string" } },
             receipt: {
               type: "object",
@@ -776,7 +913,7 @@ function buildOpenApiJson(origin, config) {
               required: ["x402_verified", "network", "asset"]
             }
           },
-          required: ["subject_id", "trust_score", "risk_level", "confidence", "route", "reasons", "receipt"]
+          required: ["subject_id", "trust_score", "route", "reasons", "receipt"]
         }
       }
     }
@@ -1126,6 +1263,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 export const __testOnly = {
   contentTypeIsJson,
   statusFromAdapterErrorCode,
+  validateJsonSchema,
   challengeHeaders,
   normalizeTrustScoreRequest,
   toTrustScoreResponse,

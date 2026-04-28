@@ -73,13 +73,27 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
   assert.equal(decoded.resource.description.includes("machine-readable risk context"), true);
+  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
   assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
-  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
-  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input", "output"]);
+  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.input,
+      decoded.resource.extensions.bazaar.schema.properties.input
+    ),
+    []
+  );
   assert.ok(decoded.resource.inputSchema);
   assert.ok(decoded.resource.outputSchema);
+  assert.deepEqual(decoded.resource.outputSchema.required, ["subject_id", "trust_score", "route"]);
   assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
@@ -154,19 +168,45 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.accepts[0].extra.version, "2");
   assert.equal(decoded.accepts[0].extra.symbol, "USDC");
   assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
+  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
   assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
-  assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.contentType, "application/json");
+  assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
+    type: "http",
+    method: "POST",
+    bodyType: "json",
+    body: {
+      subject_id: "agent_public_paid_proof",
+      context: {
+        action: "execute_task",
+        domain: "agentic_market",
+        capital_at_risk_usd: 1000
+      }
+    }
+  });
   assert.equal(decoded.resource.extensions.bazaar.info.output.type, "json");
   assert.equal(decoded.resource.extensions.bazaar.info.output.example.subject_id, "agent_public_paid_proof");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.status, "allow");
   assert.deepEqual(
     decoded.resource.extensions.bazaar.info.tags,
     ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
   );
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.input,
+      decoded.resource.extensions.bazaar.schema.properties.input
+    ),
+    []
+  );
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.output,
+      decoded.resource.extensions.bazaar.schema.properties.output
+    ),
+    []
+  );
 });
 
 test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
@@ -255,6 +295,7 @@ test("v1 resolve-trust response exposes Agentic.Market receipt contract", () => 
   assert.equal(response.trust_score, 67);
   assert.equal(response.risk_level, "medium");
   assert.equal(response.route, "degrade");
+  assert.equal(response.status, "degrade");
   assert.deepEqual(response.reasons, ["recent_validator_reversal"]);
   assert.equal(response.receipt.x402_verified, true);
   assert.equal(response.receipt.network, "eip155:8453");

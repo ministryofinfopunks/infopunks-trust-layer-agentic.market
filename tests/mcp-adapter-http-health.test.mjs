@@ -233,12 +233,20 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(trustLayerBody?.payment?.price, "$0.01");
     assert.equal(trustLayerBody?.payment?.price_atomic, "10000");
     assert.equal(trustLayerBody?.resources?.resolve_trust?.method, "POST");
+    assert.equal(
+      trustLayerBody?.resources?.resolve_trust?.resource,
+      `http://127.0.0.1:${port}/v1/resolve-trust`
+    );
     assert.equal(trustLayerBody?.resources?.resolve_trust?.url.endsWith("/v1/resolve-trust"), true);
     assert.equal(trustLayerBody?.resources?.resolve_trust?.description.includes("machine-readable risk context"), true);
     assert.equal(trustLayerBody?.resources?.resolve_trust?.mimeType, "application/json");
     assert.deepEqual(
       Object.keys(trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar ?? {}).sort(),
       ["info", "schema"]
+    );
+    assert.deepEqual(
+      trustLayerBody?.resources?.resolve_trust?.outputSchema?.required,
+      ["subject_id", "trust_score", "route"]
     );
 
     const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
@@ -264,11 +272,32 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(challenge.accepts?.[0]?.extra?.name, "USD Coin");
     assert.equal(challenge.accepts?.[0]?.extra?.version, "2");
     assert.equal(challenge.accepts?.[0]?.extra?.symbol, "USDC");
+    assert.equal(challenge.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
     assert.equal(challenge.resource?.mimeType, "application/json");
     assert.equal(challenge.resource?.description.includes("machine-readable risk context"), true);
     assert.deepEqual(
       Object.keys(challenge.resource?.extensions?.bazaar ?? {}).sort(),
       ["info", "schema"]
+    );
+    assert.deepEqual(
+      challenge.resource?.extensions?.bazaar?.info?.input,
+      {
+        type: "http",
+        method: "POST",
+        bodyType: "json",
+        body: {
+          subject_id: "agent_public_paid_proof",
+          context: {
+            action: "execute_task",
+            domain: "agentic_market",
+            capital_at_risk_usd: 1000
+          }
+        }
+      }
+    );
+    assert.deepEqual(
+      challenge.resource?.extensions?.bazaar?.schema?.required,
+      ["input"]
     );
 
     const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
