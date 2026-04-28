@@ -106,12 +106,163 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(unpaidEmpty.status, 402);
     const challenge = unpaidEmpty.headers.get("payment-required");
     assert.equal(typeof challenge, "string");
+    const unpaidInvalidBody = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(unpaidInvalidBody.status, 402);
+    const paidLegacyHeader = Buffer.from(JSON.stringify({
+      x402Version: 2,
+      accepted: {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "10000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x1111111111111111111111111111111111111111",
+        maxTimeoutSeconds: 300
+      },
+      payload: {
+        authorization: {
+          from: "0x2222222222222222222222222222222222222222",
+          nonce: "0xnonce_open_legacy"
+        }
+      }
+    }), "utf8").toString("base64");
+    const openPaidLegacy = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-payment": paidLegacyHeader
+      },
+      body: JSON.stringify({
+        subject_id: "agent_open_legacy_header",
+        context: { task_type: "marketplace_routing", domain: "general", risk_level: "medium" }
+      })
+    });
+    assert.equal(openPaidLegacy.status, 200);
 
     const legacyRoutes = ["/metrics", "/x402/reconcile", "/x402/settlement/webhook", "/api/war-room/events"];
     for (const route of legacyRoutes) {
       const legacyResponse = await fetch(`http://127.0.0.1:${port}${route}`);
       assert.equal(legacyResponse.status, 404);
     }
+  } finally {
+    await transport.close();
+  }
+});
+
+test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async () => {
+  const port = await getFreePort();
+  let capturedPayment = null;
+
+  const transport = createHttpTransport({
+    config: {
+      host: "127.0.0.1",
+      port,
+      publicUrl: null,
+      adapterName: "infopunks-test-adapter",
+      adapterVersion: "test",
+      x402VerifierMode: "facilitator",
+      x402FacilitatorProvider: "cdp",
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402PriceUsd: "0.01",
+      settlementWebhookHmacSecret: "whsec",
+      settlementWebhookSecret: null,
+      adminEndpointsRequireToken: true,
+      adminToken: "admin-token",
+      entitlementTokenRequired: false,
+      metricsPublic: false,
+      environment: "test",
+      maxBatchRequests: 25
+    },
+    mcpServer: {
+      apiClient: { health: async () => true },
+      entitlementService: {
+        verifier: {
+          readiness: async () => ({ connected: true, reason: "ok" })
+        }
+      },
+      reconciliationService: {
+        applySettlementEvent: async () => ({ ok: true }),
+        reconcileOnce: async () => ({ ok: true })
+      },
+      handleRequest: async () => ({ jsonrpc: "2.0", id: "1", result: {} }),
+      executeTool: async (_toolDef, args) => {
+        capturedPayment = args?.payment ?? null;
+        return {
+          result: {
+            subject_id: args.subject_id,
+            score: 77,
+            band: "watch",
+            confidence: 0.84,
+            decision: "allow",
+            reason_codes: ["smoke_verified"]
+          },
+          meta: {
+            billed_units: 1,
+            payment_receipt_id: "xrc_test_payment_signature",
+            x402_receipt: {
+              facilitator_provider: "cdp",
+              network: "eip155:8453",
+              asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+              payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+              price: "10000"
+            }
+          }
+        };
+      }
+    },
+    logger: { info() {}, error() {} },
+    metrics: { snapshot() { return {}; } }
+  });
+
+  await transport.listen();
+  try {
+    const trustLayer = await fetch(`http://127.0.0.1:${port}/.well-known/infopunks-trust-layer.json`);
+    assert.equal(trustLayer.status, 200);
+    const trustLayerBody = await trustLayer.json();
+    assert.equal(trustLayerBody?.payment?.price, "$0.01");
+    assert.equal(trustLayerBody?.payment?.price_atomic, "10000");
+
+    const paymentPayload = {
+      x402Version: 2,
+      accepted: {
+        scheme: "exact",
+        network: "eip155:8453",
+        amount: "10000",
+        asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+        payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+        maxTimeoutSeconds: 300
+      },
+      payload: {
+        authorization: {
+          from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          nonce: "0xnonce_test_signature"
+        }
+      }
+    };
+    const paymentSignature = Buffer.from(JSON.stringify(paymentPayload), "utf8").toString("base64");
+    const response = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "payment-signature": paymentSignature
+      },
+      body: JSON.stringify({
+        subject_id: "agent_paid_signature",
+        context: { task_type: "marketplace_routing", domain: "general", risk_level: "medium" }
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(capturedPayment?.paymentPayload?.x402Version, 2);
+    assert.equal(capturedPayment?.paymentRequirements?.network, "eip155:8453");
   } finally {
     await transport.close();
   }

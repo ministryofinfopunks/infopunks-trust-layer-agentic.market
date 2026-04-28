@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { __testOnly } from "../services/mcp-adapter/src/transport/http-server.mjs";
 import { loadEnv } from "../services/mcp-adapter/src/config/env.mjs";
+import { X402Verifier } from "../services/mcp-adapter/src/payments/x402-verifier.mjs";
 
 function withEnv(overrides, fn) {
   const snapshot = new Map();
@@ -306,6 +307,125 @@ test("loadEnv rejects localhost core URL in non-local environments", () => {
       ),
     /cannot point to localhost\/loopback/i
   );
+});
+
+test("cdp verifier includes top-level x402Version in v2 verify payload", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(JSON.stringify({ isValid: true, verifier_reference: "vr_cdp" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret",
+    timeoutMs: 1000,
+    logger: { info() {}, warn() {}, error() {} }
+  });
+  verifier.authHeaders = async () => ({});
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xnonce_ready_test_cdp"
+      }
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_ready_cdp",
+    entitlement: null
+  });
+
+  assert.equal(postedBody.x402Version, 2);
+  assert.equal(postedBody.paymentPayload.x402Version, 2);
+  assert.equal(result.ok, true);
+});
+
+test("openfacilitator verifier request body is unchanged for native x402 payload", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(JSON.stringify({ isValid: true, verifier_reference: "vr_open" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "openfacilitator",
+    verifierUrl: "https://x402.org/facilitator",
+    timeoutMs: 1000,
+    logger: null
+  });
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        nonce: "0xnonce_ready_test_open"
+      }
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_ready_open",
+    entitlement: null
+  });
+
+  assert.equal(Object.hasOwn(postedBody, "x402Version"), false);
+  assert.equal(postedBody.paymentPayload.x402Version, 2);
+  assert.equal(result.ok, true);
 });
 
 test("loadEnv requires explicit INFOPUNKS_INTERNAL_SERVICE_TOKEN in non-local environments", () => {

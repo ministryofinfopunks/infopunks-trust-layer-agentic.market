@@ -195,6 +195,14 @@ function decodePaymentHeader(paymentHeader) {
   }
 }
 
+function displayPrice(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.startsWith("$") ? normalized : `$${normalized}`;
+}
+
 function extractPayerFromPayload(paymentPayload) {
   const from = paymentPayload?.payload?.authorization?.from;
   if (typeof from === "string" && from.trim()) {
@@ -211,8 +219,10 @@ function extractNonceFromPayload(paymentPayload) {
   return null;
 }
 
-function paymentFromHeaders(headers) {
-  const paymentHeader = headers?.["payment-signature"] ?? headers?.["x-payment"];
+function paymentFromHeaders(headers, facilitatorProvider = "openfacilitator") {
+  const paymentSignatureHeader = headers?.["payment-signature"];
+  const legacyPaymentHeader = facilitatorProvider === "cdp" ? null : headers?.["x-payment"];
+  const paymentHeader = paymentSignatureHeader ?? legacyPaymentHeader;
   const decodedPayload = decodePaymentHeader(paymentHeader);
   if (!decodedPayload) {
     return null;
@@ -246,8 +256,8 @@ function hasBodyPayment(payment) {
   );
 }
 
-function mergeHeaderPayment(body, headers) {
-  const headerPayment = paymentFromHeaders(headers);
+function mergeHeaderPayment(body, headers, facilitatorProvider = "openfacilitator") {
+  const headerPayment = paymentFromHeaders(headers, facilitatorProvider);
   const idempotencyKey = headers?.["idempotency-key"] ?? headers?.["x-idempotency-key"] ?? null;
   const requestTimestamp = headers?.["x-request-timestamp"] ?? null;
   const nonce = headers?.["x-payment-nonce"] ?? null;
@@ -291,14 +301,14 @@ function mergeHeaderPayment(body, headers) {
   };
 }
 
-function attachHeaderPaymentToRpcRequest(request, headers) {
+function attachHeaderPaymentToRpcRequest(request, headers, facilitatorProvider = "openfacilitator") {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     return request;
   }
   if (request.method !== "tools/call") {
     return request;
   }
-  const withPayment = mergeHeaderPayment(request.params?.arguments ?? {}, headers);
+  const withPayment = mergeHeaderPayment(request.params?.arguments ?? {}, headers, facilitatorProvider);
   return {
     ...request,
     params: {
@@ -531,7 +541,7 @@ function buildInfopunksTrustLayerManifest(config) {
       network: (config.x402SupportedNetworks ?? [])[0] ?? null,
       asset: (config.x402AcceptedAssets ?? [])[0] ?? null,
       price_usd: config.x402PriceUsd ?? null,
-      price: config.x402Price ?? config.x402PriceUsd ?? null,
+      price: displayPrice(config.x402Price ?? config.x402PriceUsd ?? null),
       price_atomic: config.x402PricePerUnitAtomic,
       pay_to_configured: Boolean(config.x402PayTo),
       facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator"
@@ -809,7 +819,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         ? req.headers["x-request-id"].trim()
         : `req_${randomUUID()}`;
       const toolDef = findTool("resolve_trust");
-      const headerPayment = paymentFromHeaders(req.headers);
+      const headerPayment = paymentFromHeaders(req.headers, config.x402FacilitatorProvider);
       if (!headerPayment && !hasRequestBody(req)) {
         sendJson(
           res,
@@ -847,7 +857,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
-      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers);
+      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers, config.x402FacilitatorProvider);
       const suppliedPayment = headerPayment || hasBodyPayment(body?.payment);
       if (!suppliedPayment) {
         sendJson(

@@ -26,6 +26,17 @@ function extractNonceFromPaymentPayload(paymentPayload) {
   return typeof nonce === "string" && nonce.trim() ? nonce : null;
 }
 
+function cdpV2VerifyPayload({ paymentPayload, paymentRequirements }) {
+  const payloadWithVersion = paymentPayload && typeof paymentPayload === "object"
+    ? { x402Version: 2, ...paymentPayload }
+    : paymentPayload;
+  return {
+    x402Version: 2,
+    paymentPayload: payloadWithVersion,
+    paymentRequirements
+  };
+}
+
 function localStrictVerify({ payment, requiredUnits, sharedSecret, fallbackPayer }) {
   const rail = payment?.rail ?? "x402";
   const payer = payment?.payer ?? fallbackPayer ?? "anonymous";
@@ -125,7 +136,7 @@ export class X402Verifier {
   async verify({ payment, requiredUnits, operation, fallbackPayer, adapterTraceId, entitlement }) {
     const started = Date.now();
     const x402PaymentPayload = payment?.paymentPayload ?? null;
-    const x402PaymentRequirements = payment?.paymentRequirements ?? null;
+    const x402PaymentRequirements = payment?.paymentRequirements ?? x402PaymentPayload?.accepted ?? null;
     const x402NativeFlow = Boolean(x402PaymentPayload && x402PaymentRequirements);
     const payloadPayer = extractPayerFromPaymentPayload(x402PaymentPayload);
     const payloadNonce = extractNonceFromPaymentPayload(x402PaymentPayload);
@@ -178,8 +189,15 @@ export class X402Verifier {
     try {
       const payload = x402NativeFlow
         ? {
-          paymentPayload: x402PaymentPayload,
-          paymentRequirements: x402PaymentRequirements
+          ...(this.facilitatorProvider === "cdp"
+            ? cdpV2VerifyPayload({
+              paymentPayload: x402PaymentPayload,
+              paymentRequirements: x402PaymentRequirements
+            })
+            : {
+              paymentPayload: x402PaymentPayload,
+              paymentRequirements: x402PaymentRequirements
+            })
         }
         : {
           payment,
@@ -189,6 +207,18 @@ export class X402Verifier {
           fallback_payer: fallbackPayer,
           entitlement
         };
+      if (this.facilitatorProvider === "cdp" && x402NativeFlow) {
+        this.logger?.info?.({
+          event: "x402_cdp_verify_request_shape",
+          facilitator_provider: "cdp",
+          x402_version_present: payload?.x402Version === 2,
+          payment_payload_present: Boolean(payload?.paymentPayload),
+          payment_requirements_present: Boolean(payload?.paymentRequirements),
+          network: payload?.paymentRequirements?.network ?? null,
+          scheme: payload?.paymentRequirements?.scheme ?? null,
+          asset: payload?.paymentRequirements?.asset ?? null
+        });
+      }
       const response = await withTimeout(
         async (signal) =>
           fetch(`${this.verifierUrl.replace(/\/$/, "")}/verify`, {
