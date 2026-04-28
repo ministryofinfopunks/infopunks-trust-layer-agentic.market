@@ -6,11 +6,51 @@ import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and risk context.";
+const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
+const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
 const RESOLVE_TRUST_BAZAAR_EXTENSION = {
-  discoverable: true,
-  category: "infrastructure",
-  tags: ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
+  info: {
+    input: {
+      type: "http",
+      method: "POST",
+      path: "/v1/resolve-trust",
+      contentType: "application/json",
+      body: {
+        subject_id: "agent_public_paid_proof",
+        context: {
+          action: "execute_task",
+          domain: "agentic_market",
+          capital_at_risk_usd: 1000
+        }
+      }
+    },
+    output: {
+      type: "json",
+      example: {
+        subject_id: "agent_public_paid_proof",
+        trust_score: 40,
+        risk_level: "medium",
+        route: "allow",
+        status: "allow"
+      }
+    },
+    tags: RESOLVE_TRUST_BAZAAR_TAGS,
+    category: "infrastructure"
+  },
+  schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: {
+      input: { type: "object" },
+      output: { type: "object" },
+      tags: {
+        type: "array",
+        items: { type: "string" }
+      },
+      category: { type: "string" }
+    },
+    required: ["input", "output"]
+  }
 };
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {

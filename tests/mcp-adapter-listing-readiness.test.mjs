@@ -72,7 +72,12 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
-  assert.equal(decoded.resource.extensions.bazaar.discoverable, true);
+  assert.equal(decoded.resource.description.includes("machine-readable risk context"), true);
+  assert.equal(decoded.resource.mimeType, "application/json");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
+  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
+  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input", "output"]);
   assert.ok(decoded.resource.inputSchema);
   assert.ok(decoded.resource.outputSchema);
   assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
@@ -139,9 +144,29 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   );
 
   const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.equal(decoded.x402Version, 2);
+  assert.equal(decoded.accepts[0].scheme, "exact");
+  assert.equal(decoded.accepts[0].network, "eip155:8453");
+  assert.equal(decoded.accepts[0].amount, "10000");
+  assert.equal(decoded.accepts[0].asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
+  assert.equal(decoded.accepts[0].payTo, "0x1111111111111111111111111111111111111111");
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");
   assert.equal(decoded.accepts[0].extra.version, "2");
   assert.equal(decoded.accepts[0].extra.symbol, "USDC");
+  assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
+  assert.equal(decoded.resource.mimeType, "application/json");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.contentType, "application/json");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.type, "json");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.subject_id, "agent_public_paid_proof");
+  assert.deepEqual(
+    decoded.resource.extensions.bazaar.info.tags,
+    ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
+  );
+  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
+  assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
 });
 
 test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {

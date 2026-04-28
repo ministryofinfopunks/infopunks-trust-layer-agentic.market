@@ -173,6 +173,8 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
       x402PricePerUnitAtomic: "10000",
       x402PaymentTimeoutSeconds: 300,
       x402PriceUsd: "0.01",
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
       settlementWebhookHmacSecret: "whsec",
       settlementWebhookSecret: null,
       adminEndpointsRequireToken: true,
@@ -230,6 +232,51 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     const trustLayerBody = await trustLayer.json();
     assert.equal(trustLayerBody?.payment?.price, "$0.01");
     assert.equal(trustLayerBody?.payment?.price_atomic, "10000");
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.method, "POST");
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.url.endsWith("/v1/resolve-trust"), true);
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.description.includes("machine-readable risk context"), true);
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.mimeType, "application/json");
+    assert.deepEqual(
+      Object.keys(trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar ?? {}).sort(),
+      ["info", "schema"]
+    );
+
+    const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
+    assert.equal(openapi.status, 200);
+    const openapiBody = await openapi.json();
+    assert.equal(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.description.includes("machine-readable risk context"), true);
+    assert.deepEqual(
+      Object.keys(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.extensions?.bazaar ?? {}).sort(),
+      ["info", "schema"]
+    );
+
+    const unpaidEmpty = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, { method: "POST" });
+    assert.equal(unpaidEmpty.status, 402);
+    const challengeRaw = unpaidEmpty.headers.get("payment-required");
+    assert.equal(typeof challengeRaw, "string");
+    const challenge = JSON.parse(Buffer.from(challengeRaw, "base64").toString("utf8"));
+    assert.equal(challenge.x402Version, 2);
+    assert.equal(challenge.accepts?.[0]?.scheme, "exact");
+    assert.equal(challenge.accepts?.[0]?.network, "eip155:8453");
+    assert.equal(challenge.accepts?.[0]?.amount, "10000");
+    assert.equal(challenge.accepts?.[0]?.asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
+    assert.equal(challenge.accepts?.[0]?.payTo, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
+    assert.equal(challenge.accepts?.[0]?.extra?.name, "USD Coin");
+    assert.equal(challenge.accepts?.[0]?.extra?.version, "2");
+    assert.equal(challenge.accepts?.[0]?.extra?.symbol, "USDC");
+    assert.equal(challenge.resource?.mimeType, "application/json");
+    assert.equal(challenge.resource?.description.includes("machine-readable risk context"), true);
+    assert.deepEqual(
+      Object.keys(challenge.resource?.extensions?.bazaar ?? {}).sort(),
+      ["info", "schema"]
+    );
+
+    const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(unpaidEmptyJson.status, 402);
 
     const paymentPayload = {
       x402Version: 2,

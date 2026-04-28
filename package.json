@@ -26,6 +26,7 @@
     "readiness": "node scripts/readiness.mjs",
     "smoke:x402:openfacilitator": "X402_FACILITATOR_PROVIDER=openfacilitator SMOKE_X402_PROVIDER=openfacilitator node scripts/x402-smoke.mjs",
     "smoke:x402:cdp": "X402_FACILITATOR_PROVIDER=cdp SMOKE_X402_PROVIDER=cdp node scripts/x402-smoke.mjs",
+    "inspect:x402:challenge": "node scripts/inspect-x402-challenge.mjs",
     "bazaar:search": "node scripts/bazaar-discovery.mjs search",
     "bazaar:merchant": "node scripts/bazaar-discovery.mjs merchant"
   },
