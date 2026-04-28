@@ -41,16 +41,111 @@ function byteLengthFromHex(value) {
   return withoutPrefix.length / 2;
 }
 
+function isHexString(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (!/^0x[0-9a-fA-F]+$/.test(normalized)) {
+    return false;
+  }
+  return normalized.length % 2 === 0;
+}
+
+function isByteArrayLike(value) {
+  return Array.isArray(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer;
+}
+
+function toUint8Array(value) {
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return null;
+}
+
+function toHexFromBytesLike(value) {
+  if (!isByteArrayLike(value)) {
+    return value;
+  }
+  const bytes = toUint8Array(value);
+  if (!bytes) {
+    return value;
+  }
+  return `0x${Buffer.from(bytes).toString("hex")}`;
+}
+
+function normalizeHexBytesLike(value) {
+  if (isHexString(value)) {
+    return value.trim();
+  }
+  return toHexFromBytesLike(value);
+}
+
+function valueType(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (typeof value === "object" && value?.constructor?.name) {
+    return value.constructor.name;
+  }
+  return typeof value;
+}
+
 function cdpV2PayloadPair(payment) {
   const paymentPayload = payment?.paymentPayload ?? null;
   const paymentRequirements = payment?.paymentRequirements ?? paymentPayload?.accepted ?? null;
   return { paymentPayload, paymentRequirements };
 }
 
+function normalizeCdpPaymentPayload(paymentPayload) {
+  if (!paymentPayload || typeof paymentPayload !== "object") {
+    return paymentPayload;
+  }
+  const payload = paymentPayload?.payload;
+  if (!payload || typeof payload !== "object") {
+    return paymentPayload;
+  }
+  const authorization = payload?.authorization;
+  const normalizedSignature = normalizeHexBytesLike(payload?.signature);
+  const normalizedNonce = normalizeHexBytesLike(authorization?.nonce);
+
+  const signatureChanged = normalizedSignature !== payload?.signature;
+  const nonceChanged = normalizedNonce !== authorization?.nonce;
+  if (!signatureChanged && !nonceChanged) {
+    return paymentPayload;
+  }
+
+  const normalizedAuthorization = nonceChanged
+    ? { ...authorization, nonce: normalizedNonce }
+    : authorization;
+  const normalizedPayload = {
+    ...payload,
+    ...(nonceChanged ? { authorization: normalizedAuthorization } : {}),
+    ...(signatureChanged ? { signature: normalizedSignature } : {})
+  };
+  return {
+    ...paymentPayload,
+    payload: normalizedPayload
+  };
+}
+
 function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
+  const normalizedPaymentPayload = normalizeCdpPaymentPayload(paymentPayload);
   const payloadWithVersion = paymentPayload && typeof paymentPayload === "object"
-    ? { x402Version: 2, ...paymentPayload }
-    : paymentPayload;
+    ? { x402Version: 2, ...normalizedPaymentPayload }
+    : normalizedPaymentPayload;
   return {
     x402Version: 2,
     paymentPayload: payloadWithVersion,
@@ -63,6 +158,7 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
   const paymentRequirements = payload?.paymentRequirements ?? null;
   const authorization = paymentPayload?.payload?.authorization ?? null;
   const signature = paymentPayload?.payload?.signature ?? null;
+  const nonce = authorization?.nonce ?? null;
   logger?.info?.({
     event: "cdp_facilitator_payload_shape",
     phase,
@@ -77,9 +173,20 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
     payload_auth_value: authorization?.value ?? null,
     payload_auth_validAfter: authorization?.validAfter ?? null,
     payload_auth_validBefore: authorization?.validBefore ?? null,
-    payload_nonce_len: byteLengthFromHex(authorization?.nonce),
+    payload_nonce_len: byteLengthFromHex(nonce),
+    payload_nonce_type: valueType(nonce),
+    payload_nonce_is_array: isByteArrayLike(nonce),
+    payload_nonce_is_hex: isHexString(nonce),
+    payload_nonce_string_len: typeof nonce === "string" ? nonce.trim().length : null,
     has_signature: typeof signature === "string" && signature.trim().length > 0,
     signature_len: byteLengthFromHex(signature),
+    signature_type: valueType(signature),
+    signature_is_array: isByteArrayLike(signature),
+    signature_is_hex: isHexString(signature),
+    signature_string_len: typeof signature === "string" ? signature.trim().length : null,
+    auth_value_type: valueType(authorization?.value ?? null),
+    auth_validAfter_type: valueType(authorization?.validAfter ?? null),
+    auth_validBefore_type: valueType(authorization?.validBefore ?? null),
     req_scheme: paymentRequirements?.scheme ?? null,
     req_network: paymentRequirements?.network ?? null,
     req_asset: paymentRequirements?.asset ?? null,

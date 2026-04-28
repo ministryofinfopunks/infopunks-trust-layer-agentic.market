@@ -209,6 +209,80 @@ test("openfacilitator verifier keeps x402-native payment payload/requirements sh
   assert.equal(result.nonce, "0xabc");
 });
 
+test("openfacilitator verifier preserves nonce/signature arrays without CDP normalization", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(
+      JSON.stringify({
+        isValid: true,
+        verifier_reference: "rcpt_124",
+        settlement_status: "settled"
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "openfacilitator",
+    verifierUrl: "http://facilitator.test",
+    timeoutMs: 2000,
+    logger: null
+  });
+
+  const nonceArray = Array.from({ length: 32 }, (_v, idx) => idx + 1);
+  const signatureArray = Array.from({ length: 65 }, () => 187);
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        to: "0x1111111111111111111111111111111111111111",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: nonceArray
+      },
+      signature: signatureArray
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_open_array",
+    entitlement: null
+  });
+
+  assert.equal(Array.isArray(postedBody.paymentPayload.payload.authorization.nonce), true);
+  assert.equal(Array.isArray(postedBody.paymentPayload.payload.signature), true);
+  assert.deepEqual(postedBody.paymentPayload.payload.authorization.nonce, nonceArray);
+  assert.deepEqual(postedBody.paymentPayload.payload.signature, signatureArray);
+  assert.equal(result.ok, true);
+});
+
 test("cdp verifier sends v2 payment shape with top-level x402Version", async (t) => {
   const originalFetch = globalThis.fetch;
   let postedVerifyBody = null;
@@ -330,6 +404,7 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   assert.equal(postedVerifyBody.paymentPayload.payload.authorization.value, "10000");
   assert.equal(typeof postedVerifyBody.paymentPayload.payload.authorization.value, "string");
   assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, paymentPayload.payload.authorization.nonce);
+  assert.equal(postedVerifyBody.paymentPayload.payload.signature, paymentPayload.payload.signature);
   assert.equal(result.ok, true);
   assert.equal(settleResult.ok, true);
   assert.deepEqual(postedSettleBody.paymentRequirements, postedVerifyBody.paymentRequirements);
@@ -346,14 +421,141 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   assert.equal(verifyShapeLog.payload_auth_to, paymentPayload.payload.authorization.to);
   assert.equal(verifyShapeLog.payload_auth_value, "10000");
   assert.equal(verifyShapeLog.payload_nonce_len, 32);
+  assert.equal(verifyShapeLog.payload_nonce_type, "string");
+  assert.equal(verifyShapeLog.payload_nonce_is_array, false);
+  assert.equal(verifyShapeLog.payload_nonce_is_hex, true);
+  assert.equal(verifyShapeLog.payload_nonce_string_len, 66);
   assert.equal(verifyShapeLog.has_signature, true);
   assert.equal(verifyShapeLog.signature_len, 65);
+  assert.equal(verifyShapeLog.signature_type, "string");
+  assert.equal(verifyShapeLog.signature_is_array, false);
+  assert.equal(verifyShapeLog.signature_is_hex, true);
+  assert.equal(verifyShapeLog.signature_string_len, 132);
+  assert.equal(verifyShapeLog.auth_value_type, "string");
+  assert.equal(verifyShapeLog.auth_validAfter_type, "string");
+  assert.equal(verifyShapeLog.auth_validBefore_type, "string");
   assert.equal(verifyShapeLog.req_extra_name, "USDC");
   assert.equal(verifyShapeLog.req_extra_version, "2");
   assert.equal(verifyShapeLog.req_extra_symbol, "USDC");
 
   assert.equal(result.ok, true);
   assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+});
+
+test("cdp verifier normalizes nonce/signature byte arrays to hex strings for verify and settle", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedVerifyBody = null;
+  let postedSettleBody = null;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init?.body ?? "{}");
+    if (String(url).endsWith("/verify")) {
+      postedVerifyBody = body;
+      return new Response(
+        JSON.stringify({
+          isValid: true,
+          verifier_reference: "rcpt_cdp_norm_1",
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    if (String(url).endsWith("/settle")) {
+      postedSettleBody = body;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({ ok: false }),
+      {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret",
+    timeoutMs: 2000,
+    logger: null
+  });
+  verifier.authHeaders = async () => ({});
+
+  const nonceArray = Array.from({ length: 32 }, (_v, idx) => idx + 1);
+  const signatureArray = Array.from({ length: 65 }, () => 171);
+  const expectedNonceHex = `0x${Buffer.from(nonceArray).toString("hex")}`;
+  const expectedSignatureHex = `0x${Buffer.from(signatureArray).toString("hex")}`;
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USDC",
+        version: "2",
+        symbol: "USDC"
+      }
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        to: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: nonceArray
+      },
+      signature: signatureArray
+    }
+  };
+
+  const payment = {
+    rail: "x402",
+    paymentPayload,
+    paymentRequirements: paymentPayload.accepted
+  };
+  const result = await verifier.verify({
+    payment,
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_cdp_norm",
+    entitlement: null
+  });
+  const settleResult = await verifier.settle({
+    payment,
+    adapterTraceId: "mcp_trc_native_cdp_norm"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(settleResult.ok, true);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, expectedNonceHex);
+  assert.equal(postedVerifyBody.paymentPayload.payload.signature, expectedSignatureHex);
+  assert.match(postedVerifyBody.paymentPayload.payload.authorization.nonce, /^0x[0-9a-f]{64}$/i);
+  assert.match(postedVerifyBody.paymentPayload.payload.signature, /^0x[0-9a-f]{130}$/i);
+  assert.equal(postedSettleBody.paymentPayload.payload.authorization.nonce, expectedNonceHex);
+  assert.equal(postedSettleBody.paymentPayload.payload.signature, expectedSignatureHex);
 });
 
 test("entitlement service creates provisional receipt and spend state", async (t) => {
