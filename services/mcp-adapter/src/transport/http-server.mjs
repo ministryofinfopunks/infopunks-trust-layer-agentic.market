@@ -65,21 +65,42 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = {
     required: ["input", "output"]
   }
 };
+const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
+const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
 const PUBLIC_PROOF_RECEIPTS = {
-  "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e": {
+  [LATEST_PUBLIC_PROOF_RECEIPT_ID]: {
     project: "Infopunks Trust Layer",
-    receipt_id: "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e",
-    event: "paid_call.success",
+    event_type: "paid_call.success",
+    timestamp: "2026-04-29T05:46:20.244Z",
+    receipt_id: LATEST_PUBLIC_PROOF_RECEIPT_ID,
     tool: "resolve_trust",
     facilitator_provider: "cdp",
     network: "eip155:8453",
     chain: "Base mainnet",
-    status: "paid_call.success",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    final_status: 200,
+    payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
     tx_hash: null,
-    created_at: "2026-04-28T20:50:13.597Z",
-    settled_at: null,
-    verification_note: "This receipt proves a paid trust-resolution call verified through x402 on CDP facilitator and Base mainnet."
+    block_explorer_url: null,
+    verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
+  },
+  [PREVIOUS_PUBLIC_PROOF_RECEIPT_ID]: {
+    project: "Infopunks Trust Layer",
+    event_type: "paid_call.success",
+    timestamp: "2026-04-28T20:50:13.597Z",
+    receipt_id: PREVIOUS_PUBLIC_PROOF_RECEIPT_ID,
+    tool: "resolve_trust",
+    facilitator_provider: "cdp",
+    network: "eip155:8453",
+    chain: "Base mainnet",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    final_status: 200,
+    payment_header_used: "PAYMENT-SIGNATURE",
+    public_proof: true,
+    tx_hash: null,
+    block_explorer_url: null,
+    verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
   }
 };
 
@@ -1010,34 +1031,44 @@ async function publicReceiptResponse(mcpServer, receiptId) {
     ?? event?.txHash
     ?? base.tx_hash
   );
+  const explorerUrl = blockExplorerUrl(base.network, txHash);
   return {
     ...base,
-    status: event?.event_type ?? event?.status ?? base.status,
-    created_at: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.created_at ?? null,
-    settled_at: receipt?.settled_at ?? base.settled_at ?? null,
+    event_type: event?.event_type ?? base.event_type,
+    event: event?.event_type ?? base.event_type,
+    status: event?.event_type ?? event?.status ?? base.event_type,
+    timestamp: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
+    created_at: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
+    settled_at: receipt?.settled_at ?? null,
     tx_hash: txHash,
-    block_explorer_url: blockExplorerUrl(base.network, txHash)
+    block_explorer_url: explorerUrl,
+    public_verification_level: txHash
+      ? "application_receipt_with_onchain_anchor"
+      : "application_receipt_pending_tx_hash"
   };
 }
 
-function renderProofPage(proof) {
+function renderProofPage({ latestProof, previousReceiptId }) {
   const lines = [
     "INFOPUNKS TRUST LAYER",
     "PAID CALL VERIFIED",
     "",
-    `receipt_id: ${proof.receipt_id}`,
-    `status: ${proof.status}`,
-    `facilitator: ${String(proof.facilitator_provider ?? "").toUpperCase()}`,
-    `network: ${proof.chain}`,
-    `chain_id: ${proof.network}`,
-    `tool: ${proof.tool}`,
+    `latest_receipt_id: ${latestProof.receipt_id}`,
+    `previous_receipt_id: ${previousReceiptId}`,
+    "",
+    `receipt_id: ${latestProof.receipt_id}`,
+    `status: ${latestProof.status}`,
+    `facilitator: ${String(latestProof.facilitator_provider ?? "").toUpperCase()}`,
+    `network: ${latestProof.chain}`,
+    `chain_id: ${latestProof.network}`,
+    `tool: ${latestProof.tool}`,
     "settlement: verified"
   ];
-  if (proof.tx_hash) {
-    lines.push(`tx_hash: ${proof.tx_hash}`);
+  if (latestProof.tx_hash) {
+    lines.push(`tx_hash: ${latestProof.tx_hash}`);
   }
-  if (proof.block_explorer_url) {
-    lines.push(`explorer: ${proof.block_explorer_url}`);
+  if (latestProof.block_explorer_url) {
+    lines.push(`explorer: ${latestProof.block_explorer_url}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -1108,12 +1139,20 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
     }
 
     if (method === "GET" && url.pathname === "/proof") {
-      const proof = await publicReceiptResponse(mcpServer, "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e");
-      if (!proof) {
+      const latestProof = await publicReceiptResponse(mcpServer, LATEST_PUBLIC_PROOF_RECEIPT_ID);
+      if (!latestProof) {
         sendText(res, 404, "Proof not found\n", corsHeaders());
         return;
       }
-      sendText(res, 200, renderProofPage(proof), corsHeaders());
+      sendText(
+        res,
+        200,
+        renderProofPage({
+          latestProof,
+          previousReceiptId: PREVIOUS_PUBLIC_PROOF_RECEIPT_ID
+        }),
+        corsHeaders()
+      );
       return;
     }
 

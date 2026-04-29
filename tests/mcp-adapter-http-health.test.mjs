@@ -111,26 +111,51 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(proof.status, 200);
     const proofText = await proof.text();
     assert.equal(proofText.includes("PAID CALL VERIFIED"), true);
-    assert.equal(proofText.includes("xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e"), true);
+    assert.equal(proofText.includes("latest_receipt_id: xrc_735986e0-fe0c-4214-8e72-add8093958ca"), true);
+    assert.equal(proofText.includes("previous_receipt_id: xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e"), true);
 
-    const knownReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e`);
-    assert.equal(knownReceipt.status, 200);
-    const knownReceiptBody = await knownReceipt.json();
-    assert.equal(knownReceiptBody.public_proof, true);
-    assert.equal(knownReceiptBody.receipt_id, "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e");
-    assert.equal(knownReceiptBody.event, "paid_call.success");
-    assert.equal(knownReceiptBody.tool, "resolve_trust");
-    assert.equal(knownReceiptBody.facilitator_provider, "cdp");
-    assert.equal(knownReceiptBody.network, "eip155:8453");
-    assert.equal(knownReceiptBody.chain, "Base mainnet");
-    const serializedReceipt = JSON.stringify(knownReceiptBody).toLowerCase();
+    const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_735986e0-fe0c-4214-8e72-add8093958ca`);
+    assert.equal(latestReceipt.status, 200);
+    const latestReceiptBody = await latestReceipt.json();
+    assert.equal(latestReceiptBody.public_proof, true);
+    assert.equal(latestReceiptBody.receipt_id, "xrc_735986e0-fe0c-4214-8e72-add8093958ca");
+    assert.equal(latestReceiptBody.event_type, "paid_call.success");
+    assert.equal(latestReceiptBody.tool, "resolve_trust");
+    assert.equal(latestReceiptBody.facilitator_provider, "cdp");
+    assert.equal(latestReceiptBody.network, "eip155:8453");
+    assert.equal(latestReceiptBody.chain, "Base mainnet");
+    assert.equal(latestReceiptBody.payTo, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
+    assert.equal(latestReceiptBody.final_status, 200);
+    assert.equal(latestReceiptBody.payment_header_used, "PAYMENT-SIGNATURE");
+    assert.equal(latestReceiptBody.public_verification_level, "application_receipt_pending_tx_hash");
+    assert.equal(latestReceiptBody.tx_hash, null);
+    assert.equal(latestReceiptBody.block_explorer_url, null);
+
+    const previousReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e`);
+    assert.equal(previousReceipt.status, 200);
+    const previousReceiptBody = await previousReceipt.json();
+    assert.equal(previousReceiptBody.receipt_id, "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e");
+    assert.equal(previousReceiptBody.event_type, "paid_call.success");
+    assert.equal(previousReceiptBody.public_proof, true);
+
+    const serializedReceipt = JSON.stringify(latestReceiptBody).toLowerCase();
     assert.equal(serializedReceipt.includes("cdp_api_key_secret"), false);
+    assert.equal(serializedReceipt.includes("cdp_api_key_id"), false);
     assert.equal(serializedReceipt.includes("authorization"), false);
-    assert.equal(serializedReceipt.includes("payment-signature"), false);
+    assert.equal(serializedReceipt.includes("\"payment_header_used\":\"payment-signature\""), true);
     assert.equal(serializedReceipt.includes("x-payment"), false);
+    assert.equal(serializedReceipt.includes("raw_payment_payload"), false);
+    assert.equal(serializedReceipt.includes("raw_signature"), false);
+    assert.equal(serializedReceipt.includes("private"), false);
+    assert.equal(serializedReceipt.includes("token"), false);
+    assert.equal(serializedReceipt.includes("stack"), false);
+    assert.equal(serializedReceipt.includes("env"), false);
+    assert.equal(serializedReceipt.includes("payload"), false);
 
     const unknownReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_unknown`);
     assert.equal(unknownReceipt.status, 404);
+    const unknownReceiptBody = await unknownReceipt.json();
+    assert.equal(unknownReceiptBody?.error?.code, "RECEIPT_NOT_FOUND");
 
     const events = await fetch(`http://127.0.0.1:${port}/v1/events/recent`);
     assert.equal(events.status, 200);
