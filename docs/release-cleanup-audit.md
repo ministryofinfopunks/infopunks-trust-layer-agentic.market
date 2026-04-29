@@ -97,5 +97,5 @@ Adapter protected/admin:
 
 Smoke/readiness:
 - `npm run readiness`
-- `npm run smoke:x402:testnet`
-- `npm run smoke:x402:mainnet`
+- `SMOKE_X402_NETWORK=testnet npm run smoke:x402:cdp`
+- `SMOKE_X402_NETWORK=mainnet npm run smoke:x402:cdp`

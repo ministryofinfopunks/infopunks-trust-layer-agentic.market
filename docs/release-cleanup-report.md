@@ -50,8 +50,8 @@ npm run typecheck
 npm test
 npm run build
 npm run readiness
-npm run smoke:x402:testnet
-npm run smoke:x402:mainnet
+SMOKE_X402_NETWORK=testnet npm run smoke:x402:cdp
+SMOKE_X402_NETWORK=mainnet npm run smoke:x402:cdp
 ```
 
 Results:
@@ -71,4 +71,4 @@ Results:
 3. Set `X402_PAY_TO` to the Base mainnet receiver wallet.
 4. Provide facilitator credentials if required.
 5. Run live smoke tests with real signed x402 payment payloads and `SMOKE_REQUIRED=true`.
-6. Submit `https://<public-adapter-host>/.well-known/infopunks-trust-layer.json` to Agentic.Market.
+6. Submit `https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json` to Agentic.Market.

@@ -2,7 +2,7 @@
 
 ## Public Endpoint Checklist
 
-- Public base URL: `https://<your-public-host>`
+- Public base URL: `https://infopunks-x402-adapter-cdp-staging.onrender.com`
 - `GET /health` returns `200` with `{ "status": "ok" }`.
 - `GET /openapi.json` returns `200` and documents `/v1/resolve-trust` plus `/v1/events/recent`.
 - `GET /.well-known/infopunks-trust-layer.json` returns `200` and points to the paid trust primitive.
@@ -15,7 +15,7 @@
 - Run challenge-only public smoke:
 
 ```bash
-PUBLIC_BASE_URL=https://<your-public-host> npm run smoke:public:testnet
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com npm run smoke:public:testnet
 ```
 
 - Save the decoded `PAYMENT-REQUIRED` challenge from the smoke output.
@@ -23,7 +23,7 @@ PUBLIC_BASE_URL=https://<your-public-host> npm run smoke:public:testnet
 - Run paid public smoke:
 
 ```bash
-PUBLIC_BASE_URL=https://<your-public-host> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 X_PAYMENT_B64=<base64-x402-payment-payload> \
 npm run smoke:public:testnet
 ```

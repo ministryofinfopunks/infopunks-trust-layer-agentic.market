@@ -17,14 +17,15 @@ Production Base mainnet config must be explicit:
 
 ```bash
 NODE_ENV=production
-PUBLIC_BASE_URL=https://<public-adapter-host>
-MCP_ADAPTER_PUBLIC_URL=https://<public-adapter-host>
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com
+MCP_ADAPTER_PUBLIC_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com
 X402_NETWORK=base
 X402_ASSET=USDC
-X402_PRICE_USD=0.01
+X402_PRICE=0.01
 X402_PRICE_PER_UNIT_ATOMIC=10000
 X402_PAY_TO=0x<base-mainnet-receiver>
-X402_FACILITATOR_URL=https://x402.org/facilitator
+X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+X402_EIP712_NAME="USD Coin"
 ALLOW_TESTNET=false
 ALLOW_RELAXED_PAYMENT=false
 ```
@@ -82,27 +83,30 @@ Unpaid production calls return `402` with an x402 challenge in the `PAYMENT-REQU
 Testnet:
 
 ```bash
-PUBLIC_BASE_URL=https://<testnet-adapter-host> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 TESTNET_X402_PAYMENT_JSON='<testnet payment json>' \
-npm run smoke:x402:testnet
+SMOKE_X402_NETWORK=testnet \
+npm run smoke:x402:cdp
 ```
 
 Mainnet:
 
 ```bash
-PUBLIC_BASE_URL=https://<public-adapter-host> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 MAINNET_X402_PAYMENT_JSON='<mainnet payment json>' \
-npm run smoke:x402:mainnet
+SMOKE_X402_NETWORK=mainnet \
+npm run smoke:x402:cdp
 ```
 
 Run three paid mainnet calls with distinct payment payloads/nonces:
 
 ```bash
 for i in 1 2 3; do
-  PUBLIC_BASE_URL=https://<public-adapter-host> \
+  PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
   SMOKE_REQUEST_ID="mainnet-paid-${i}" \
   MAINNET_X402_PAYMENT_JSON="$(cat artifacts/mainnet-payment-${i}.json)" \
+  SMOKE_X402_NETWORK=mainnet \
   SMOKE_REQUIRED=true \
-  npm run smoke:x402:mainnet
+  npm run smoke:x402:cdp
 done
 ```

@@ -42,6 +42,34 @@ paths:
             application/json:
               schema:
                 type: object
+  /proof:
+    get:
+      summary: Human-readable paid-call proof page
+      responses:
+        "200":
+          description: Proof page
+          content:
+            text/plain:
+              schema:
+                type: string
+  /receipts/{receipt_id}:
+    get:
+      summary: Public paid-call proof receipt
+      parameters:
+        - name: receipt_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Receipt proof
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Receipt not found
   /v1/resolve-trust:
     post:
       summary: Resolve trust with x402 payment gating

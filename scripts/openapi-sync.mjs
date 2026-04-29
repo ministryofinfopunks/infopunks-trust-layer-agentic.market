@@ -8,6 +8,8 @@ const requiredPaths = [
   "/health",
   "/openapi.json",
   "/.well-known/infopunks-trust-layer.json",
+  "/proof",
+  "/receipts/{receipt_id}",
   "/v1/resolve-trust",
   "/v1/events/recent"
 ];
