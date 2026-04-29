@@ -76,15 +76,19 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
   assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
   assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.contentType, "application/json");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
-  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input", "output"]);
+  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
+  assert.deepEqual(
+    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
+    { valid: true }
+  );
   assert.deepEqual(
     __testOnly.validateJsonSchema(
       decoded.resource.extensions.bazaar.info.input,
@@ -171,12 +175,12 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
   assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
     type: "http",
     method: "POST",
-    path: "/v1/resolve-trust",
-    contentType: "application/json",
+    bodyType: "json",
     body: {
       subject_id: "agent_public_paid_proof",
       context: {
@@ -195,6 +199,10 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   );
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.deepEqual(
+    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
+    { valid: true }
+  );
   assert.deepEqual(
     __testOnly.validateJsonSchema(
       decoded.resource.extensions.bazaar.info.input,

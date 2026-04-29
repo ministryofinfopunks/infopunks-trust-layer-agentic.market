@@ -36,6 +36,7 @@ async function main() {
   const accept = challenge?.accepts?.[0] ?? {};
   const bazaar = challenge?.resource?.extensions?.bazaar ?? {};
   const resourceValue = challenge?.resource?.resource ?? challenge?.resource?.url ?? "";
+  const bazaarValidation = __testOnly.validateBazaarExtension(bazaar);
   const inputSchemaErrors = __testOnly.validateJsonSchema(
     bazaar?.info?.input,
     bazaar?.schema?.properties?.input
@@ -53,6 +54,8 @@ async function main() {
   console.log(`mimeType_present=${Boolean(challenge?.resource?.mimeType)}`);
   console.log(`outputSchema_present=${Boolean(challenge?.resource?.outputSchema)}`);
   console.log(`bazaar_keys=${Object.keys(bazaar).join(",")}`);
+  console.log(`bazaar_official_valid=${bazaarValidation?.valid === true}`);
+  console.log(`bazaar_route_template=${bazaar?.routeTemplate ?? ""}`);
   console.log(`bazaar_input_valid=${inputSchemaErrors.length === 0}`);
   console.log(`bazaar_output_valid=${outputSchemaErrors.length === 0}`);
   console.log(`bazaar_input_required=${(bazaar?.schema?.required ?? []).join(",")}`);

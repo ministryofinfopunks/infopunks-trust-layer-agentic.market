@@ -1,5 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
@@ -34,37 +35,61 @@ const RESOLVE_TRUST_RESPONSE_SCHEMA = {
   },
   required: ["subject_id", "trust_score", "route"]
 };
-const RESOLVE_TRUST_BAZAAR_EXTENSION = {
-  info: {
-    input: {
-      type: "http",
-      method: "POST",
-      path: "/v1/resolve-trust",
-      contentType: "application/json",
-      body: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE
-    },
-    output: {
-      type: "json",
-      example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE
-    },
-    tags: RESOLVE_TRUST_BAZAAR_TAGS,
-    category: "infrastructure"
-  },
-  schema: {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    type: "object",
-    properties: {
-      input: { type: "object" },
-      output: { type: "object" },
-      tags: {
-        type: "array",
-        items: { type: "string" }
+const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
+  const declared = declareDiscoveryExtension({
+    input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        subject_id: { type: "string" },
+        context: { type: "object" }
       },
-      category: { type: "string" }
+      required: ["subject_id"],
+      additionalProperties: false
     },
-    required: ["input", "output"]
-  }
-};
+    bodyType: "json",
+    output: {
+      example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
+      schema: RESOLVE_TRUST_RESPONSE_SCHEMA
+    }
+  }).bazaar;
+
+  return {
+    ...declared,
+    routeTemplate: "/v1/resolve-trust",
+    info: {
+      ...declared.info,
+      input: {
+        ...declared.info.input,
+        method: "POST"
+      },
+      tags: RESOLVE_TRUST_BAZAAR_TAGS,
+      category: "infrastructure"
+    },
+    schema: {
+      ...declared.schema,
+      properties: {
+        ...declared.schema.properties,
+        input: {
+          ...declared.schema.properties.input,
+          properties: {
+            ...declared.schema.properties.input.properties,
+            method: {
+              type: "string",
+              enum: ["POST"]
+            }
+          },
+          required: Array.from(new Set([...(declared.schema.properties.input.required ?? []), "method"]))
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" }
+        },
+        category: { type: "string" }
+      }
+    }
+  };
+})();
 const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
 const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
 const PUBLIC_PROOF_RECEIPTS = {
@@ -323,6 +348,10 @@ function validateJsonSchema(value, schema, path = "$") {
   }
 
   return errors;
+}
+
+function validateBazaarExtension(extension) {
+  return validateDiscoveryExtension(extension);
 }
 
 function paymentRequiredEnvelope(config, toolDef, resourcePath) {
@@ -1440,6 +1469,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 export const __testOnly = {
   contentTypeIsJson,
   statusFromAdapterErrorCode,
+  validateBazaarExtension,
   validateJsonSchema,
   challengeHeaders,
   normalizeTrustScoreRequest,

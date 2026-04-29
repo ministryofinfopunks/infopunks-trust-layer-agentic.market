@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 
-import { createHttpTransport } from "../services/mcp-adapter/src/transport/http-server.mjs";
+import { __testOnly, createHttpTransport } from "../services/mcp-adapter/src/transport/http-server.mjs";
 
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -302,7 +302,11 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(trustLayerBody?.resources?.resolve_trust?.mimeType, "application/json");
     assert.deepEqual(
       Object.keys(trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar ?? {}).sort(),
-      ["info", "schema"]
+      ["info", "routeTemplate", "schema"]
+    );
+    assert.equal(
+      trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar?.routeTemplate,
+      "/v1/resolve-trust"
     );
     assert.deepEqual(
       trustLayerBody?.resources?.resolve_trust?.outputSchema?.required,
@@ -315,7 +319,7 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.description.includes("machine-readable risk context"), true);
     assert.deepEqual(
       Object.keys(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.extensions?.bazaar ?? {}).sort(),
-      ["info", "schema"]
+      ["info", "routeTemplate", "schema"]
     );
 
     const unpaidEmpty = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, { method: "POST" });
@@ -337,15 +341,15 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(challenge.resource?.description.includes("machine-readable risk context"), true);
     assert.deepEqual(
       Object.keys(challenge.resource?.extensions?.bazaar ?? {}).sort(),
-      ["info", "schema"]
+      ["info", "routeTemplate", "schema"]
     );
+    assert.equal(challenge.resource?.extensions?.bazaar?.routeTemplate, "/v1/resolve-trust");
     assert.deepEqual(
       challenge.resource?.extensions?.bazaar?.info?.input,
       {
         type: "http",
         method: "POST",
-        path: "/v1/resolve-trust",
-        contentType: "application/json",
+        bodyType: "json",
         body: {
           subject_id: "agent_public_paid_proof",
           context: {
@@ -358,7 +362,11 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     );
     assert.deepEqual(
       challenge.resource?.extensions?.bazaar?.schema?.required,
-      ["input", "output"]
+      ["input"]
+    );
+    assert.deepEqual(
+      __testOnly.validateBazaarExtension(challenge.resource?.extensions?.bazaar),
+      { valid: true }
     );
 
     const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
