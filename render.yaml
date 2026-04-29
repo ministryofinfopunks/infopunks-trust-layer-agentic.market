@@ -39,13 +39,13 @@ services:
       - key: X402_REQUIRED_DEFAULT
         value: "true"
       - key: X402_FACILITATOR_PROVIDER
-        value: openfacilitator
+        value: cdp
       - key: X402_VERIFIER_MODE
         value: facilitator
       - key: X402_VERIFIER_URL
-        value: https://x402.org/facilitator
+        value: https://api.cdp.coinbase.com/platform/v2/x402
       - key: X402_FACILITATOR_URL
-        value: https://x402.org/facilitator
+        value: https://api.cdp.coinbase.com/platform/v2/x402
       - key: X402_NETWORK
         value: base
       - key: X402_ASSET
@@ -54,7 +54,7 @@ services:
         value: USDC
       - key: X402_SUPPORTED_NETWORKS
         value: eip155:8453
-      - key: X402_PAYMENT_SCHEME
+      - key: X402_SCHEME
         value: exact
       - key: X402_PAYMENT_ASSET_ADDRESS
         value: 0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913
