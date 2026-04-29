@@ -12,6 +12,7 @@
     "packages/*"
   ],
   "scripts": {
+    "ci": "npm run build && npm test",
     "dev": "node services/mcp-adapter/src/index.mjs",
     "build": "node --check services/mcp-adapter/src/index.mjs && node --check services/mcp-adapter/src/transport/http-server.mjs && node --check scripts/lint.mjs && node --check scripts/smoke.mjs && node --check scripts/smoke-public.mjs && node --check scripts/proof-public.mjs && node scripts/openapi-sync.mjs",
     "start": "node services/mcp-adapter/src/index.mjs",
