@@ -92,6 +92,10 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
 })();
 const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
 const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
+const STATIC_PUBLIC_PROOF_RECEIPT_IDS = [
+  LATEST_PUBLIC_PROOF_RECEIPT_ID,
+  PREVIOUS_PUBLIC_PROOF_RECEIPT_ID
+];
 const PUBLIC_PROOF_RECEIPTS = {
   [LATEST_PUBLIC_PROOF_RECEIPT_ID]: {
     project: "Infopunks Trust Layer",
@@ -1036,62 +1040,161 @@ function blockExplorerUrl(network, txHash) {
   return null;
 }
 
-async function findReceiptContext(mcpServer, receiptId) {
+function timestampMs(value) {
+  const parsed = Date.parse(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function chainLabelForNetwork(network) {
+  if (network === "eip155:8453") {
+    return "Base mainnet";
+  }
+  if (network === "eip155:84532") {
+    return "Base Sepolia";
+  }
+  return typeof network === "string" && network.trim() ? network.trim() : null;
+}
+
+function proofVerificationLevel({ source, txHash, hasReceipt }) {
+  if (txHash) {
+    return "application_receipt_with_onchain_anchor";
+  }
+  if (source === "event_feed") {
+    return "application_receipt_event_feed";
+  }
+  if (hasReceipt) {
+    return "application_receipt_pending_tx_hash";
+  }
+  return "application_receipt_pending_tx_hash";
+}
+
+async function findReceiptContext(mcpServer, receiptId, recentEvents = null) {
   const receipt = typeof mcpServer?.store?.getReceiptById === "function"
     ? await mcpServer.store.getReceiptById(receiptId)
     : null;
-  const recent = await mcpServer?.warRoomFeed?.listLatest?.(200) ?? [];
+  const recent = recentEvents ?? (await mcpServer?.warRoomFeed?.listLatest?.(200) ?? []);
   const event = Array.isArray(recent)
     ? recent.find((entry) => String(entry?.receipt_id ?? "").trim() === receiptId)
     : null;
   return { receipt, event };
 }
 
-async function publicReceiptResponse(mcpServer, receiptId) {
-  const base = PUBLIC_PROOF_RECEIPTS[receiptId];
-  if (!base) {
+function buildPublicReceiptProof({ receiptId, receipt = null, event = null, base = null }) {
+  if (!receiptId || (!receipt && !event && !base)) {
     return null;
   }
-  const { receipt, event } = await findReceiptContext(mcpServer, receiptId);
+  const metadata = receipt?.metadata ?? {};
+  const source = receipt ? "receipt_store" : (event ? "event_feed" : "static_seed");
+  const eventType = event?.event_type ?? base?.event_type ?? "paid_call.success";
+  const network = event?.network ?? metadata.network ?? base?.network ?? null;
   const txHash = normalizeTxHash(
     receipt?.tx_hash
     ?? receipt?.txHash
+    ?? metadata.tx_hash
+    ?? metadata.txHash
     ?? event?.tx_hash
     ?? event?.txHash
-    ?? base.tx_hash
+    ?? base?.tx_hash
   );
-  const explorerUrl = blockExplorerUrl(base.network, txHash);
+  const createdAt = event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base?.timestamp ?? null;
+  const settlementStatus = receipt?.settlement_status ?? metadata.settlement_status ?? event?.settlement_status ?? base?.settlement_status ?? (base ? "verified" : null);
+  const x402Verified = receipt ? true : (event ? true : (base?.x402_verified ?? true));
+  const finalStatus = base?.final_status ?? (String(eventType).startsWith("paid_call.") ? 200 : null);
+  const tool = receipt?.tool_name ?? event?.tool ?? base?.tool ?? "resolve_trust";
+  const payTo = event?.payTo ?? event?.pay_to ?? metadata.payTo ?? metadata.pay_to ?? base?.payTo ?? null;
+  const price = event?.price ?? metadata.price ?? base?.price ?? null;
+  const chain = base?.chain ?? chainLabelForNetwork(network);
   return {
-    ...base,
-    event_type: event?.event_type ?? base.event_type,
-    event: event?.event_type ?? base.event_type,
-    status: event?.event_type ?? event?.status ?? base.event_type,
-    timestamp: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
-    created_at: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
+    project: base?.project ?? "Infopunks Trust Layer",
+    receipt_id: receiptId,
+    event_type: eventType,
+    event: eventType,
+    status: event?.status ?? eventType,
+    timestamp: createdAt,
+    created_at: createdAt,
     settled_at: receipt?.settled_at ?? null,
+    settlement_status: settlementStatus,
+    subject_id: event?.subject_id ?? base?.subject_id ?? null,
+    tool,
+    facilitator_provider: event?.facilitator_provider ?? metadata.facilitator_provider ?? base?.facilitator_provider ?? null,
+    network,
+    chain,
+    payTo,
+    price,
+    asset: metadata.asset ?? null,
+    x402_verified: x402Verified,
+    public_proof: true,
+    source,
+    final_status: finalStatus,
+    payment_header_used: base?.payment_header_used ?? null,
+    verifier_reference: receipt?.verifier_reference ?? null,
+    receipt_status: receipt?.receipt_status ?? null,
+    verification_note: base?.verification_note ?? "Public receipt proof for a successful paid x402 trust-resolution call.",
     tx_hash: txHash,
-    block_explorer_url: explorerUrl,
-    public_verification_level: txHash
-      ? "application_receipt_with_onchain_anchor"
-      : "application_receipt_pending_tx_hash"
+    block_explorer_url: blockExplorerUrl(network, txHash),
+    public_verification_level: proofVerificationLevel({ source, txHash, hasReceipt: Boolean(receipt) })
   };
 }
 
+async function publicReceiptResponse(mcpServer, receiptId, recentEvents = null) {
+  const base = PUBLIC_PROOF_RECEIPTS[receiptId] ?? null;
+  const { receipt, event } = await findReceiptContext(mcpServer, receiptId, recentEvents);
+  return buildPublicReceiptProof({ receiptId, receipt, event, base });
+}
+
+async function resolveProofPageState(mcpServer) {
+  const recentEvents = await mcpServer?.warRoomFeed?.listLatest?.(200) ?? [];
+  const orderedReceiptIds = [];
+  const seen = new Set();
+  if (Array.isArray(recentEvents)) {
+    const recentReceiptEvents = recentEvents
+      .filter((entry) => String(entry?.receipt_id ?? "").trim())
+      .sort((left, right) => timestampMs(right?.timestamp) - timestampMs(left?.timestamp));
+    for (const entry of recentReceiptEvents) {
+      const receiptId = String(entry?.receipt_id ?? "").trim();
+      if (seen.has(receiptId)) {
+        continue;
+      }
+      seen.add(receiptId);
+      orderedReceiptIds.push(receiptId);
+    }
+  }
+  for (const receiptId of STATIC_PUBLIC_PROOF_RECEIPT_IDS) {
+    if (!seen.has(receiptId)) {
+      orderedReceiptIds.push(receiptId);
+    }
+  }
+
+  for (let index = 0; index < orderedReceiptIds.length; index += 1) {
+    const receiptId = orderedReceiptIds[index];
+    const proof = await publicReceiptResponse(mcpServer, receiptId, recentEvents);
+    if (proof) {
+      return {
+        latestProof: proof,
+        previousReceiptId: orderedReceiptIds.slice(index + 1).find((candidateId) => candidateId !== receiptId) ?? null
+      };
+    }
+  }
+
+  return { latestProof: null, previousReceiptId: null };
+}
+
 function renderProofPage({ latestProof, previousReceiptId }) {
+  const settlement = latestProof.settlement_status ?? "unknown";
   const lines = [
     "INFOPUNKS TRUST LAYER",
     "PAID CALL VERIFIED",
     "",
     `latest_receipt_id: ${latestProof.receipt_id}`,
-    `previous_receipt_id: ${previousReceiptId}`,
+    `previous_receipt_id: ${previousReceiptId ?? "unavailable"}`,
     "",
     `receipt_id: ${latestProof.receipt_id}`,
     `status: ${latestProof.status}`,
     `facilitator: ${String(latestProof.facilitator_provider ?? "").toUpperCase()}`,
-    `network: ${latestProof.chain}`,
+    `network: ${latestProof.chain ?? latestProof.network ?? "unknown"}`,
     `chain_id: ${latestProof.network}`,
     `tool: ${latestProof.tool}`,
-    "settlement: verified"
+    `settlement: ${settlement}`
   ];
   if (latestProof.tx_hash) {
     lines.push(`tx_hash: ${latestProof.tx_hash}`);
@@ -1168,7 +1271,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
     }
 
     if (method === "GET" && url.pathname === "/proof") {
-      const latestProof = await publicReceiptResponse(mcpServer, LATEST_PUBLIC_PROOF_RECEIPT_ID);
+      const { latestProof, previousReceiptId } = await resolveProofPageState(mcpServer);
       if (!latestProof) {
         sendText(res, 404, "Proof not found\n", corsHeaders());
         return;
@@ -1178,7 +1281,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         200,
         renderProofPage({
           latestProof,
-          previousReceiptId: PREVIOUS_PUBLIC_PROOF_RECEIPT_ID
+          previousReceiptId
         }),
         corsHeaders()
       );

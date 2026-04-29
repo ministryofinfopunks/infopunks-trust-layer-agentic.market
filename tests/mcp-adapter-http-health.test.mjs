@@ -212,6 +212,154 @@ test("/health is unconditional and does not depend on upstream readiness", async
   }
 });
 
+test("public proof endpoints stay consistent with recent paid receipt events", async () => {
+  const port = await getFreePort();
+  const latestReceiptId = "xrc_live_event_latest";
+  const previousReceiptId = "xrc_live_event_previous";
+  const payTo = "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3";
+
+  const transport = createHttpTransport({
+    config: {
+      host: "127.0.0.1",
+      port,
+      publicUrl: `http://127.0.0.1:${port}`,
+      adapterName: "infopunks-test-adapter",
+      adapterVersion: "test",
+      x402VerifierMode: "facilitator",
+      x402FacilitatorProvider: "cdp",
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: payTo,
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402PriceUsd: "0.01",
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      settlementWebhookHmacSecret: "whsec",
+      settlementWebhookSecret: null,
+      adminEndpointsRequireToken: true,
+      adminToken: "admin-token",
+      entitlementTokenRequired: false,
+      metricsPublic: false,
+      environment: "test",
+      maxBatchRequests: 25
+    },
+    mcpServer: {
+      apiClient: { health: async () => true },
+      entitlementService: {
+        verifier: {
+          readiness: async () => ({ connected: true, reason: "ok" })
+        }
+      },
+      reconciliationService: {
+        applySettlementEvent: async () => ({ ok: true }),
+        reconcileOnce: async () => ({ ok: true })
+      },
+      handleRequest: async () => ({ jsonrpc: "2.0", id: "1", result: {} }),
+      executeTool: async () => ({}),
+      store: {
+        getReceiptById: async () => null
+      },
+      warRoomFeed: {
+        listLatest: async () => ([
+          {
+            event_id: "evt_latest",
+            event_type: "paid_call.success",
+            timestamp: "2026-04-29T09:30:00.000Z",
+            subject_id: "agent_public_paid_proof",
+            trust_score: 77,
+            route: "allow",
+            status: "allow",
+            receipt_id: latestReceiptId,
+            facilitator_provider: "cdp",
+            network: "eip155:8453",
+            payTo,
+            price: "0.01"
+          },
+          {
+            event_id: "evt_duplicate",
+            event_type: "paid_call.success",
+            timestamp: "2026-04-29T09:29:00.000Z",
+            subject_id: "agent_public_paid_proof",
+            trust_score: 76,
+            route: "allow",
+            status: "allow",
+            receipt_id: latestReceiptId,
+            facilitator_provider: "cdp",
+            network: "eip155:8453",
+            payTo,
+            price: "0.01"
+          },
+          {
+            event_id: "evt_previous",
+            event_type: "paid_call.success",
+            timestamp: "2026-04-29T09:28:00.000Z",
+            subject_id: "agent_public_paid_proof_previous",
+            trust_score: 73,
+            route: "allow",
+            status: "allow",
+            receipt_id: previousReceiptId,
+            facilitator_provider: "cdp",
+            network: "eip155:8453",
+            payTo,
+            price: "0.01"
+          }
+        ])
+      }
+    },
+    logger: { info() {}, error() {} },
+    metrics: { snapshot() { return {}; } }
+  });
+
+  await transport.listen();
+  try {
+    const events = await fetch(`http://127.0.0.1:${port}/v1/events/recent?limit=50`);
+    assert.equal(events.status, 200);
+    const eventsBody = await events.json();
+    assert.equal(eventsBody.count, 3);
+    assert.equal(eventsBody.events[0].receipt_id, latestReceiptId);
+    assert.equal(eventsBody.events.some((entry) => entry.receipt_id === latestReceiptId), true);
+
+    const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/${latestReceiptId}`);
+    assert.equal(latestReceipt.status, 200);
+    const latestReceiptBody = await latestReceipt.json();
+    assert.equal(latestReceiptBody.receipt_id, latestReceiptId);
+    assert.equal(latestReceiptBody.subject_id, "agent_public_paid_proof");
+    assert.equal(latestReceiptBody.tool, "resolve_trust");
+    assert.equal(latestReceiptBody.facilitator_provider, "cdp");
+    assert.equal(latestReceiptBody.network, "eip155:8453");
+    assert.equal(latestReceiptBody.price, "0.01");
+    assert.equal(latestReceiptBody.public_proof, true);
+    assert.equal(latestReceiptBody.source, "event_feed");
+    assert.equal(latestReceiptBody.x402_verified, true);
+
+    const latestReceiptSerialized = JSON.stringify(latestReceiptBody).toLowerCase();
+    assert.equal(latestReceiptSerialized.includes("payment-signature"), false);
+    assert.equal(latestReceiptSerialized.includes("x-payment"), false);
+    assert.equal(latestReceiptSerialized.includes("raw_payment_payload"), false);
+    assert.equal(latestReceiptSerialized.includes("signature"), false);
+    assert.equal(latestReceiptSerialized.includes("secret"), false);
+    assert.equal(latestReceiptSerialized.includes("private_key"), false);
+    assert.equal(latestReceiptSerialized.includes("cdp_api_key_secret"), false);
+    assert.equal(latestReceiptSerialized.includes("admin-token"), false);
+
+    const proof = await fetch(`http://127.0.0.1:${port}/proof`);
+    assert.equal(proof.status, 200);
+    const proofText = await proof.text();
+    assert.equal(proofText.includes(`latest_receipt_id: ${latestReceiptId}`), true);
+    assert.equal(proofText.includes(`previous_receipt_id: ${previousReceiptId}`), true);
+
+    const unknownReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_unknown_live_event`);
+    assert.equal(unknownReceipt.status, 404);
+    const unknownReceiptBody = await unknownReceipt.json();
+    assert.equal(unknownReceiptBody?.error?.code, "RECEIPT_NOT_FOUND");
+  } finally {
+    await transport.close();
+  }
+});
+
 test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async () => {
   const port = await getFreePort();
   let capturedPayment = null;
