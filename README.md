@@ -28,6 +28,7 @@ npm start
 ```
 
 Service default: `http://localhost:4021`
+Staging deployment: `https://infopunks-x402-adapter-cdp-staging.onrender.com`
 
 Run launch checks:
 
@@ -38,10 +39,12 @@ npm run build
 
 Hosted checks:
 
+These staging commands target the controlled CDP facilitator deployment used before mainnet/public launch.
+
 ```bash
-curl https://YOUR_PUBLIC_URL/health
-curl https://YOUR_PUBLIC_URL/.well-known/infopunks-trust-layer.json
-curl https://YOUR_PUBLIC_URL/openapi.json
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/health
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/openapi.json
 ```
 
 ## curl Example
@@ -49,7 +52,7 @@ curl https://YOUR_PUBLIC_URL/openapi.json
 Unpaid call (expected `402`):
 
 ```bash
-curl -i http://localhost:4021/v1/resolve-trust \
+curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
   -X POST \
   -H 'content-type: application/json' \
   -d '{
@@ -65,7 +68,7 @@ curl -i http://localhost:4021/v1/resolve-trust \
 Paid retry (expected `200`):
 
 ```bash
-curl -i http://localhost:4021/v1/resolve-trust \
+curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
   -X POST \
   -H 'content-type: application/json' \
   -H "x-payment: <base64-x402-payment-payload>" \
@@ -119,14 +122,14 @@ npm run proof
 Generate public testnet proof against deployed URL:
 
 ```bash
-PUBLIC_BASE_URL=https://<your-render-url> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 npm run smoke:public:testnet
 
-PUBLIC_BASE_URL=https://<your-render-url> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 X_PAYMENT_B64=<base64-x402-payment-payload> \
 npm run smoke:public:testnet
 
-PUBLIC_BASE_URL=https://<your-render-url> \
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
 X_PAYMENT_B64=<base64-x402-payment-payload> \
 npm run proof:public:testnet
 ```
