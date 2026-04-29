@@ -29,7 +29,7 @@ jobs:
 
       - name: Smoke boot
         run: |
-          INFOPUNKS_API_KEY=ci-infopunks-key node apps/api/server.mjs > /tmp/infopunks-api.log 2>&1 &
+          INFOPUNKS_API_KEY=ci-infopunks-key node --experimental-sqlite apps/api/server.mjs > /tmp/infopunks-api.log 2>&1 &
           API_PID=$!
           trap 'kill $API_PID' EXIT
           for attempt in $(seq 1 40); do
