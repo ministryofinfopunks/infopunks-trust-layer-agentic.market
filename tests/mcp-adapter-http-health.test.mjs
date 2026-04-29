@@ -85,6 +85,14 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.deepEqual(body, { status: "ok" });
     assert.equal(upstreamHealthCalls, 0);
 
+    const root = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(root.status, 200);
+    const rootText = await root.text();
+    assert.equal(rootText.includes("Infopunks Trust Layer alive"), true);
+    assert.equal(rootText.includes("/health"), true);
+    assert.equal(rootText.includes("/proof"), true);
+    assert.equal(rootText.includes("/openapi.json"), true);
+
     const trustLayer = await fetch(`http://127.0.0.1:${port}/.well-known/infopunks-trust-layer.json`);
     assert.equal(trustLayer.status, 200);
     const trustLayerBody = await trustLayer.json();
@@ -96,6 +104,33 @@ test("/health is unconditional and does not depend on upstream readiness", async
     const openapiBody = await openapi.json();
     assert.ok(openapiBody.paths["/v1/resolve-trust"]);
     assert.ok(openapiBody.paths["/v1/events/recent"]);
+    assert.ok(openapiBody.paths["/proof"]);
+    assert.ok(openapiBody.paths["/receipts/{receipt_id}"]);
+
+    const proof = await fetch(`http://127.0.0.1:${port}/proof`);
+    assert.equal(proof.status, 200);
+    const proofText = await proof.text();
+    assert.equal(proofText.includes("PAID CALL VERIFIED"), true);
+    assert.equal(proofText.includes("xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e"), true);
+
+    const knownReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e`);
+    assert.equal(knownReceipt.status, 200);
+    const knownReceiptBody = await knownReceipt.json();
+    assert.equal(knownReceiptBody.public_proof, true);
+    assert.equal(knownReceiptBody.receipt_id, "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e");
+    assert.equal(knownReceiptBody.event, "paid_call.success");
+    assert.equal(knownReceiptBody.tool, "resolve_trust");
+    assert.equal(knownReceiptBody.facilitator_provider, "cdp");
+    assert.equal(knownReceiptBody.network, "eip155:8453");
+    assert.equal(knownReceiptBody.chain, "Base mainnet");
+    const serializedReceipt = JSON.stringify(knownReceiptBody).toLowerCase();
+    assert.equal(serializedReceipt.includes("cdp_api_key_secret"), false);
+    assert.equal(serializedReceipt.includes("authorization"), false);
+    assert.equal(serializedReceipt.includes("payment-signature"), false);
+    assert.equal(serializedReceipt.includes("x-payment"), false);
+
+    const unknownReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_unknown`);
+    assert.equal(unknownReceipt.status, 404);
 
     const events = await fetch(`http://127.0.0.1:${port}/v1/events/recent`);
     assert.equal(events.status, 200);
@@ -284,7 +319,8 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
       {
         type: "http",
         method: "POST",
-        bodyType: "json",
+        path: "/v1/resolve-trust",
+        contentType: "application/json",
         body: {
           subject_id: "agent_public_paid_proof",
           context: {
@@ -297,7 +333,7 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     );
     assert.deepEqual(
       challenge.resource?.extensions?.bazaar?.schema?.required,
-      ["input"]
+      ["input", "output"]
     );
 
     const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {

@@ -39,7 +39,8 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = {
     input: {
       type: "http",
       method: "POST",
-      bodyType: "json",
+      path: "/v1/resolve-trust",
+      contentType: "application/json",
       body: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE
     },
     output: {
@@ -53,42 +54,32 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
     properties: {
-      input: {
-        type: "object",
-        properties: {
-          type: { type: "string", const: "http" },
-          method: { type: "string", enum: ["POST"] },
-          bodyType: { type: "string", enum: ["json"] },
-          body: {
-            type: "object",
-            properties: {
-              subject_id: { type: "string" },
-              context: { type: "object" }
-            },
-            required: ["subject_id"],
-            additionalProperties: false
-          }
-        },
-        required: ["type", "method", "bodyType", "body"],
-        additionalProperties: false
-      },
-      output: {
-        type: "object",
-        properties: {
-          type: { type: "string", enum: ["json"] },
-          example: RESOLVE_TRUST_RESPONSE_SCHEMA
-        },
-        required: ["example"],
-        additionalProperties: false
-      },
+      input: { type: "object" },
+      output: { type: "object" },
       tags: {
         type: "array",
         items: { type: "string" }
       },
       category: { type: "string" }
     },
-    required: ["input"],
-    additionalProperties: false
+    required: ["input", "output"]
+  }
+};
+const PUBLIC_PROOF_RECEIPTS = {
+  "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e": {
+    project: "Infopunks Trust Layer",
+    receipt_id: "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e",
+    event: "paid_call.success",
+    tool: "resolve_trust",
+    facilitator_provider: "cdp",
+    network: "eip155:8453",
+    chain: "Base mainnet",
+    status: "paid_call.success",
+    public_proof: true,
+    tx_hash: null,
+    created_at: "2026-04-28T20:50:13.597Z",
+    settled_at: null,
+    verification_note: "This receipt proves a paid trust-resolution call verified through x402 on CDP facilitator and Base mainnet."
   }
 };
 
@@ -793,6 +784,39 @@ function buildOpenApiJson(origin, config) {
           }
         }
       },
+      "/proof": {
+        get: {
+          summary: "Human-readable paid-call proof page",
+          responses: {
+            200: {
+              description: "Proof page",
+              content: { "text/plain": { schema: { type: "string" } } }
+            }
+          }
+        }
+      },
+      "/receipts/{receipt_id}": {
+        get: {
+          summary: "Public paid-call proof receipt",
+          parameters: [
+            {
+              name: "receipt_id",
+              in: "path",
+              required: true,
+              schema: { type: "string" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Receipt proof",
+              content: { "application/json": { schema: { type: "object" } } }
+            },
+            404: {
+              description: "Receipt not found"
+            }
+          }
+        }
+      },
       "/v1/resolve-trust": {
         post: {
           summary: "Resolve trust with x402 payment gating",
@@ -944,6 +968,80 @@ function sanitizePublicEvent(event = {}) {
   };
 }
 
+function normalizeTxHash(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function blockExplorerUrl(network, txHash) {
+  if (!txHash) {
+    return null;
+  }
+  if (network === "eip155:8453") {
+    return `https://basescan.org/tx/${txHash}`;
+  }
+  return null;
+}
+
+async function findReceiptContext(mcpServer, receiptId) {
+  const receipt = typeof mcpServer?.store?.getReceiptById === "function"
+    ? await mcpServer.store.getReceiptById(receiptId)
+    : null;
+  const recent = await mcpServer?.warRoomFeed?.listLatest?.(200) ?? [];
+  const event = Array.isArray(recent)
+    ? recent.find((entry) => String(entry?.receipt_id ?? "").trim() === receiptId)
+    : null;
+  return { receipt, event };
+}
+
+async function publicReceiptResponse(mcpServer, receiptId) {
+  const base = PUBLIC_PROOF_RECEIPTS[receiptId];
+  if (!base) {
+    return null;
+  }
+  const { receipt, event } = await findReceiptContext(mcpServer, receiptId);
+  const txHash = normalizeTxHash(
+    receipt?.tx_hash
+    ?? receipt?.txHash
+    ?? event?.tx_hash
+    ?? event?.txHash
+    ?? base.tx_hash
+  );
+  return {
+    ...base,
+    status: event?.event_type ?? event?.status ?? base.status,
+    created_at: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.created_at ?? null,
+    settled_at: receipt?.settled_at ?? base.settled_at ?? null,
+    tx_hash: txHash,
+    block_explorer_url: blockExplorerUrl(base.network, txHash)
+  };
+}
+
+function renderProofPage(proof) {
+  const lines = [
+    "INFOPUNKS TRUST LAYER",
+    "PAID CALL VERIFIED",
+    "",
+    `receipt_id: ${proof.receipt_id}`,
+    `status: ${proof.status}`,
+    `facilitator: ${String(proof.facilitator_provider ?? "").toUpperCase()}`,
+    `network: ${proof.chain}`,
+    `chain_id: ${proof.network}`,
+    `tool: ${proof.tool}`,
+    "settlement: verified"
+  ];
+  if (proof.tx_hash) {
+    lines.push(`tx_hash: ${proof.tx_hash}`);
+  }
+  if (proof.block_explorer_url) {
+    lines.push(`explorer: ${proof.block_explorer_url}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function statusFromAdapterErrorCode(code, fallback = 500) {
   if (code === "REPLAY_DETECTED") {
     return 409;
@@ -990,8 +1088,48 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
+    if (method === "GET" && url.pathname === "/") {
+      const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+      const marketplaceListing = `${origin}/.well-known/${"agentic-marketplace"}.json`;
+      const body = [
+        "Infopunks Trust Layer alive",
+        `${origin}/health`,
+        `${origin}/proof`,
+        `${origin}/openapi.json`,
+        marketplaceListing
+      ].join("\n");
+      sendText(res, 200, `${body}\n`, corsHeaders());
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" }, corsHeaders());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/proof") {
+      const proof = await publicReceiptResponse(mcpServer, "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e");
+      if (!proof) {
+        sendText(res, 404, "Proof not found\n", corsHeaders());
+        return;
+      }
+      sendText(res, 200, renderProofPage(proof), corsHeaders());
+      return;
+    }
+
+    if (method === "GET" && url.pathname.startsWith("/receipts/")) {
+      const receiptId = decodeURIComponent(url.pathname.slice("/receipts/".length)).trim();
+      const proof = await publicReceiptResponse(mcpServer, receiptId);
+      if (!proof) {
+        sendJson(
+          res,
+          404,
+          { error: { code: "RECEIPT_NOT_FOUND", message: "Receipt not found." } },
+          corsHeaders()
+        );
+        return;
+      }
+      sendJson(res, 200, proof, corsHeaders());
       return;
     }
 
