@@ -1,225 +1,149 @@
-# Infopunks Trust Layer V1
+# Infopunks Trust Layer
 
-Infopunks Trust Layer V1 is a deterministic trust resolution and routing substrate for multi-agent systems. It ships as a package, SDK, API, and event rail. The center of gravity is Passport, Evidence, Trust, Routing, and live events.
+Infopunks Trust Layer is one paid trust primitive for Agentic.Market.
 
-## Repo Layout
+Agents call it before routing work, capital, validation, execution, or payment:
 
-- `apps/api`: HTTP control plane for Passport, Evidence, Trust, Routing, Event Rail, Trace/Replay, metrics, and demo simulation.
-- `apps/site`: homepage plus the React War Room surface.
-- `apps/war-room`: standalone operator-facing War Room surface.
-- `apps/simulator`: CLI scenario runner that creates visible trust movement in seconds.
-- `services/mcp-adapter`: Agentic.Market-ready MCP adapter with identity bridge and x402-compatible payment gating.
-- `packages/trust-engine`: deterministic snapshot and score computation logic.
-- `packages/trust-sdk`: the single installable primitive, published as `@infopunks/trust-sdk`.
-- `docs`: quickstart, API overview, concepts, framework examples, builder checklists, and end-to-end example material.
-- `openapi.yaml`: source of truth for the public control-plane contract.
+`POST /v1/resolve-trust`
 
-## Quick Start
+The response returns a trust score, route, reasons, confidence, and x402 receipt. It is a developer-native preflight check: pay once, resolve trust, then decide whether to allow, degrade, or block the next action.
+
+## What It Is
+
+Single paid endpoint:
+- `POST /v1/resolve-trust`
+
+Public endpoints:
+
+- `GET /health`
+- `GET /openapi.json`
+- `GET /.well-known/infopunks-trust-layer.json`
+- `GET /v1/events/recent`
+
+## 60-Second Onboarding
 
 ```bash
 npm install
-npm run dev
-```
-
-`npm run dev` boots the API on a fresh local SQLite database, seeds demo movement automatically, and prints the local URLs plus development API keys.
-
-If you want the control plane only:
-
-```bash
 npm start
 ```
 
-For the UI workspace only:
+Service default: `http://localhost:4021`
+Staging deployment: `https://infopunks-x402-adapter-cdp-staging.onrender.com`
+
+Run launch checks:
 
 ```bash
-npm run site:dev
+npm run smoke
+npm run build
 ```
 
-For the MCP adapter:
+Hosted checks:
+
+These staging commands target the controlled CDP facilitator deployment used before mainnet/public launch.
 
 ```bash
-npm run mcp:adapter
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/health
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json
+curl https://infopunks-x402-adapter-cdp-staging.onrender.com/openapi.json
 ```
 
-For a production-style UI build:
+## curl Example
+
+Unpaid call (expected `402`):
 
 ```bash
-npm run site:build
+curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
+  -X POST \
+  -H 'content-type: application/json' \
+  -d '{
+    "subject_id": "agent_221",
+    "context": {
+      "task_type": "marketplace_routing",
+      "domain": "general",
+      "risk_level": "medium"
+    }
+  }'
 ```
 
-## Install Surface
-
-```ts
-import { Infopunks } from "@infopunks/trust-sdk";
-```
-
-Default local API key:
-
-```text
-dev-infopunks-key
-```
-
-Override it with `INFOPUNKS_API_KEY` when needed.
-
-## Environment
-
-- `INFOPUNKS_BASE_URL`: control-plane base URL for local tools and the War Room.
-- `INFOPUNKS_DB_PATH`: SQLite path for the API process.
-- `INFOPUNKS_API_KEY`: root development API key.
-- `INFOPUNKS_READ_API_KEY`: read-only development API key used by the War Room.
-- `PORT`: API listen port, default `4010`.
-
-## Generated Artifacts
-
-- `apps/site/.next`
-- `data/local`
-- SQLite WAL and shm files
-
-These are local-only artifacts and should not be committed.
-
-## Quality Gates
+Paid retry (expected `200`):
 
 ```bash
-npm run ci
+curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
+  -X POST \
+  -H 'content-type: application/json' \
+  -H "x-payment: <base64-x402-payment-payload>" \
+  -d '{
+    "subject_id": "agent_221",
+    "context": {
+      "task_type": "marketplace_routing",
+      "domain": "general",
+      "risk_level": "medium"
+    }
+  }'
 ```
 
-## Deployment Handoff
+## Expected Response
 
-For release and ops handoff, use:
-
-- `docs/deployment-handoff.md`
-
-## Single Payable Endpoint (x402)
-
-Public commercial endpoint (via MCP adapter):
-
-- `POST /trust-score` (payable)
-
-Health endpoint:
-
-- `GET /health`
-
-Trust-score response shape:
+On paid success (`200`), response shape:
 
 ```json
 {
-  "entity_id": "string",
-  "trust_score": 0,
-  "risk_level": "low|medium|high|critical",
-  "confidence": 0,
-  "last_updated": "ISO-8601 timestamp",
-  "signals": [
-    {
-      "name": "string",
-      "value": "string|number|boolean",
-      "weight": 0
-    }
-  ],
-  "policy": {
-    "route": "allow|degrade|quarantine|block",
-    "reason": "string"
+  "subject_id": "agent_221",
+  "trust_score": 67,
+  "risk_level": "medium",
+  "confidence": 0.79,
+  "route": "degrade",
+  "reasons": ["recent_validator_reversal"],
+  "receipt": {
+    "x402_verified": true,
+    "network": "eip155:8453",
+    "asset": "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    "payment_receipt_id": "xrc_...",
+    "verifier_reference": "vr_...",
+    "settlement_status": "provisional"
   }
 }
 ```
 
-## Local Run (Safe Test First)
+## Why It Matters
 
-1. Start core API:
+- Enforces paid access for trust resolution (`402` when unpaid).
+- Returns a verified trust decision in one call.
+- Produces a receipt id you can audit in billing and settlement flows.
 
-```bash
-npm start
-```
+## Event Feed And Proof Artifacts
 
-2. Start MCP/x402 adapter (strict mode safe test):
-
-```bash
-INFOPUNKS_ENVIRONMENT=local \
-MCP_ADAPTER_TRANSPORT=http \
-MCP_ADAPTER_HOST=0.0.0.0 \
-MCP_ADAPTER_PORT=4021 \
-INFOPUNKS_CORE_BASE_URL=http://127.0.0.1:4010 \
-INFOPUNKS_INTERNAL_SERVICE_TOKEN=dev-infopunks-key \
-X402_REQUIRED_DEFAULT=true \
-X402_VERIFIER_MODE=strict \
-INFOPUNKS_X402_SHARED_SECRET=replace-for-local-testing \
-MCP_ENTITLEMENT_TOKEN_REQUIRED=false \
-MCP_ENTITLEMENT_REQUIRE_FOR_PAID_TOOLS=false \
-MCP_ENTITLEMENT_FALLBACK_ALLOW=true \
-npm run mcp:adapter
-```
-
-3. Check health:
+Generate launch artifacts:
 
 ```bash
-curl -s http://127.0.0.1:4021/health | jq
+npm run proof
 ```
 
-## Unpaid vs Paid Test Calls
-
-Unpaid request (expect HTTP `402`):
+Generate public testnet proof against deployed URL:
 
 ```bash
-curl -i -X POST http://127.0.0.1:4021/trust-score \
-  -H 'content-type: application/json' \
-  -d '{
-    "entity_id":"agent_221",
-    "context":{"task_type":"market_analysis","domain":"crypto","risk_level":"high"}
-  }'
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
+npm run smoke:public:testnet
+
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
+X_PAYMENT_B64=<base64-x402-payment-payload> \
+npm run smoke:public:testnet
+
+PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
+X_PAYMENT_B64=<base64-x402-payment-payload> \
+npm run proof:public:testnet
 ```
 
-Paid request (strict local test equivalent):
+Read recent payment events:
 
 ```bash
-PROOF=$(node -e 'const c=require("crypto");const payer="agent_router";const nonce="nonce_1";const units=1;process.stdout.write(c.createHmac("sha256","replace-for-local-testing").update(`${payer}:${nonce}:${units}`).digest("hex"));')
-
-curl -i -X POST http://127.0.0.1:4021/trust-score \
-  -H 'content-type: application/json' \
-  -d "{
-    \"entity_id\":\"agent_221\",
-    \"context\":{\"task_type\":\"market_analysis\",\"domain\":\"crypto\",\"risk_level\":\"high\"},
-    \"payment\":{
-      \"rail\":\"x402\",
-      \"asset\":\"USDC\",
-      \"network\":\"base\",
-      \"payer\":\"agent_router\",
-      \"units_authorized\":1,
-      \"nonce\":\"nonce_1\",
-      \"proof\":\"${PROOF}\",
-      \"proof_id\":\"proof_1\"
-    }
-  }"
+npm run event-feed
 ```
 
-## Public Deployment Path
+## Environment Matrix
 
-Deployment target selected: **Render** (backend-first, fastest for two-node services: core API + public x402 adapter).
-
-Why:
-- repo already has Node service entrypoints
-- no framework migration required
-- simple managed Postgres + environment secret injection
-- clean separation: private core trust API, public payable adapter
-
-Use:
-- `render.yaml` for service topology
-- `.env.example` for required secrets/vars
-
-## How this gets discovered on Agentic Market / x402 Bazaar
-
-Expose adapter publicly with:
-- `GET /.well-known/x402-bazaar.json`
-- `GET /.well-known/agentic-marketplace.json`
-- `POST /trust-score` with HTTP `402` challenge semantics and x402 metadata headers
-
-Discovery/indexing prerequisites:
-- `MCP_ADAPTER_PUBLIC_URL` set to a real public domain
-- facilitator/verifier mode active (`X402_VERIFIER_MODE=facilitator`)
-- successful paid calls producing receipt-linked activity
-- no localhost URLs in discovery manifests
-
-## P2 Surfaces
-
-- Cost-aware calls: `POST /v1/budget/quote`, plus `response_cost` and `budget_hints` on machine-facing JSON resources.
-- Portability bundle: `POST /v1/portability/export` and `POST /v1/portability/import` for signed trust carriage across networks.
-- Economic hooks: `POST /v1/economic/escrow-quote`, `POST /v1/economic/risk-price`, and `POST /v1/economic/attestation-bundle`.
-- Builder doctrine: see `docs/frameworks/openai-agents-sdk.md`, `docs/frameworks/langchain.md`, `docs/frameworks/claude-codex.md`, `docs/builders/add-trust-to-your-swarm-in-5-minutes.md`, and `docs/builders/trust-layer-checklist.md`.
+| Environment | Network | Asset | Verifier | Use |
+|---|---|---|---|---|
+| local | Base Sepolia/mock | USDC | local facilitator | CI/dev |
+| testnet | Base Sepolia | USDC | real facilitator | controlled launch |
+| production | Base mainnet | USDC | real facilitator | public launch |

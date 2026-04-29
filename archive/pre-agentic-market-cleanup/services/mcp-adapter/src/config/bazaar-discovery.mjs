@@ -75,10 +75,18 @@ export function buildBazaarDiscoveryDocument(config) {
     },
     endpoints: [
       {
+        path: "/v1/resolve-trust",
+        method: "POST",
+        payable: true,
+        semantic_description: "Agentic.Market trust resolution endpoint with HTTP 402 challenge semantics.",
+        protocol: "http+json",
+        operation: "resolve_trust"
+      },
+      {
         path: "/trust-score",
         method: "POST",
         payable: true,
-        semantic_description: "REST alias for trust resolution with HTTP 402 challenge semantics.",
+        semantic_description: "Legacy REST alias for trust resolution with HTTP 402 challenge semantics.",
         protocol: "http+json",
         operation: "resolve_trust"
       },
@@ -103,10 +111,28 @@ export function buildBazaarDiscoveryDocument(config) {
         operation: "tools/call"
       },
       {
+        path: "/health",
+        method: "GET",
+        payable: false,
+        semantic_description: "Liveness status for listing and deploy health checks."
+      },
+      {
         path: "/healthz",
         method: "GET",
         payable: false,
         semantic_description: "Health status of MCP adapter and core API reachability."
+      },
+      {
+        path: "/openapi.json",
+        method: "GET",
+        payable: false,
+        semantic_description: "OpenAPI JSON for the Agentic.Market public HTTP surface."
+      },
+      {
+        path: "/.well-known/infopunks-trust-layer.json",
+        method: "GET",
+        payable: false,
+        semantic_description: "Infopunks Trust Layer discovery metadata."
       },
       {
         path: "/.well-known/x402-bazaar.json",

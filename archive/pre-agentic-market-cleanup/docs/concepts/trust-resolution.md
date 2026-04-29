@@ -11,6 +11,32 @@ V1 resolves trust from:
 
 The source of truth is evidence. Scores are derived views.
 
+## Trust Vector (trust-v1)
+
+Trust resolution now emits a multidimensional trust vector:
+
+- executionReliability
+- economicIntegrity
+- identityCredibility
+- behavioralStability
+- dependencyRisk
+- adversarialRisk
+- evidenceFreshness
+- overallTrust
+
+Each dimension is normalized to `0..100`.
+
+The API also emits a policy decision object with enforceable controls (`ALLOW`, `RATE_LIMIT`, `REQUIRE_ESCROW`, `REQUIRE_SECONDARY_VALIDATION`, `MANUAL_REVIEW`, `BLOCK`, `QUARANTINE`) and a trust state:
+
+- `UNKNOWN`
+- `VERIFIED`
+- `DEGRADING`
+- `RISKY`
+- `COMPROMISED`
+- `QUARANTINED`
+
+Legacy compatibility remains in place via `score` and `trust_score`.
+
 ## Determinism contract
 
 For a given:

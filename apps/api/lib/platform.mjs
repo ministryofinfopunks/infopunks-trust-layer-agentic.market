@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_POLICY, EVIDENCE_EVENT_TYPES, SUBJECT_TYPES } from "../../../packages/schema/index.mjs";
@@ -9,6 +10,7 @@ import {
   computeResolution,
   computeSnapshot,
   computeTrustEvent,
+  normalizeTrustConfig,
   stableHash,
   validationEligible
 } from "../../../packages/trust-engine/index.mjs";
@@ -192,6 +194,8 @@ function toResolution(row) {
   if (!row) {
     return null;
   }
+  const scoreBreakdown = parseJsonColumn(row.score_breakdown, {});
+  const trustV1 = scoreBreakdown?.trust_v1 ?? {};
   return {
     resolution_id: row.resolution_id,
     subject_id: row.subject_id,
@@ -203,7 +207,12 @@ function toResolution(row) {
     reason_codes: parseJsonColumn(row.reason_codes, []),
     recommended_validators: parseJsonColumn(row.recommended_validators, []),
     policy_actions: parseJsonColumn(row.policy_actions, []),
-    score_breakdown: parseJsonColumn(row.score_breakdown, {}),
+    score_breakdown: scoreBreakdown,
+    trust_state: trustV1.trust_state ?? null,
+    trust_vector: trustV1.trust_vector ?? null,
+    trust_policy: trustV1.trust_policy ?? null,
+    trust_evidence: trustV1.trust_evidence ?? null,
+    agentic_market: trustV1.agentic_market ?? null,
     trace_id: row.trace_id,
     engine_version: row.engine_version,
     policy_version: row.policy_version,
@@ -324,16 +333,26 @@ function computeEvidenceFingerprint(input) {
   });
 }
 
+function defaultDbPathFromEnv() {
+  const environment = process.env.INFOPUNKS_ENVIRONMENT || "local";
+  const defaultDataDir = process.env.DATA_DIR
+    ?? ((environment === "local" || environment === "test")
+      ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../data")
+      : path.join(os.tmpdir(), "infopunks"));
+  return path.join(defaultDataDir, "infopunks.db");
+}
+
 export class TrustPlatform {
   constructor({
-    dbPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../data/infopunks.db"),
+    dbPath = defaultDbPathFromEnv(),
     apiKey = process.env.INFOPUNKS_API_KEY || "dev-infopunks-key",
     environment = process.env.INFOPUNKS_ENVIRONMENT || "local",
     apiKeysConfig = process.env.INFOPUNKS_API_KEYS_JSON || null,
     rateLimitConfig = parseJsonEnv(process.env.INFOPUNKS_RATE_LIMITS_JSON, defaultRateLimitConfig()),
     sseMaxStreamsPerKey = Number(process.env.INFOPUNKS_SSE_MAX_STREAMS_PER_KEY || 2),
     webhookRetryBaseMs = Number(process.env.INFOPUNKS_WEBHOOK_RETRY_BASE_MS || 250),
-    portabilitySigningKey = process.env.INFOPUNKS_PORTABILITY_SIGNING_KEY || "dev-portability-signing-key"
+    portabilitySigningKey = process.env.INFOPUNKS_PORTABILITY_SIGNING_KEY || "dev-portability-signing-key",
+    trustConfig = normalizeTrustConfig()
   } = {}) {
     this.db = initDb(dbPath);
     this.apiKey = apiKey;
@@ -350,6 +369,7 @@ export class TrustPlatform {
     this.sseMaxStreamsPerKey = sseMaxStreamsPerKey;
     this.webhookRetryBaseMs = webhookRetryBaseMs;
     this.portabilitySigningKey = portabilitySigningKey;
+    this.trustConfig = trustConfig;
     this.metrics = {
       http_requests_total: 0,
       http_request_duration_ms: [],
@@ -1525,7 +1545,8 @@ export class TrustPlatform {
       evidences,
       nowIso: nowIso(),
       previousSnapshot,
-      policy: DEFAULT_POLICY
+      policy: DEFAULT_POLICY,
+      trustConfig: this.trustConfig
     });
 
     this.db
@@ -1991,7 +2012,8 @@ export class TrustPlatform {
         snapshot,
         context,
         policy,
-        nowIso: nowIso()
+        nowIso: nowIso(),
+        trustConfig: this.trustConfig
       });
       const domainFit = Number(snapshot.vector.domain_competence?.[context.domain] ?? 0.2);
       if (!validationEligible(resolution.band, context, policy)) {
@@ -2027,7 +2049,8 @@ export class TrustPlatform {
       snapshot,
       context,
       policy,
-      nowIso: nowIso()
+      nowIso: nowIso(),
+      trustConfig: this.trustConfig
     });
     const recommendedValidators = this.recommendValidators(
       input.subject_id,
@@ -2056,12 +2079,26 @@ export class TrustPlatform {
       reason_codes: computed.reason_codes,
       recommended_validators: recommendedValidators,
       policy_actions: computed.policy_actions,
-      score_breakdown: computed.score_breakdown,
+      score_breakdown: {
+        ...computed.score_breakdown,
+        trust_v1: {
+          trust_state: computed.trust_state,
+          trust_vector: computed.trust_vector,
+          trust_policy: computed.trust_policy,
+          trust_evidence: computed.trust_evidence,
+          agentic_market: computed.agentic_market
+        }
+      },
       trace_id: traceId,
       engine_version: computed.engine_version,
       policy_version: computed.policy_version,
       expires_at: computed.expires_at,
-      created_at: createdAt
+      created_at: createdAt,
+      trust_state: computed.trust_state,
+      trust_vector: computed.trust_vector,
+      trust_policy: computed.trust_policy,
+      trust_evidence: computed.trust_evidence,
+      agentic_market: computed.agentic_market
     };
     this.db
       .prepare(
@@ -2122,7 +2159,10 @@ export class TrustPlatform {
         band: resolution.band,
         decision: resolution.decision,
         confidence: resolution.confidence,
-        recommended_validators: resolution.recommended_validators
+        recommended_validators: resolution.recommended_validators,
+        trust_state: resolution.trust_state,
+        trust_vector: resolution.trust_vector,
+        trust_policy: resolution.trust_policy
       },
       created_at: createdAt
     };
@@ -2152,6 +2192,8 @@ export class TrustPlatform {
         band: resolution.band,
         confidence: resolution.confidence,
         decision: resolution.decision,
+        trust_state: resolution.trust_state,
+        trust_policy_action: resolution.trust_policy?.action ?? null,
         context
       },
       source: "infopunks.trust-engine"
@@ -2227,6 +2269,25 @@ export class TrustPlatform {
         data: trustEvent.data,
         source: "infopunks.trust-engine"
       });
+      for (const extra of trustEvent.extra_events ?? []) {
+        this.emitEvent({
+          type: extra.type,
+          subject: input.subject_id,
+          traceId,
+          data: {
+            eventId: `${extra.type.toLowerCase()}_${traceId}`,
+            timestamp: createdAt,
+            agentId: input.subject_id,
+            previousState: previousResolution?.trust_state ?? null,
+            newState: resolution.trust_state ?? null,
+            previousScore: previousResolution?.score ?? null,
+            newScore: resolution.score,
+            reasonCodes: resolution.reason_codes,
+            severity: extra.severity ?? "INFO"
+          },
+          source: "infopunks.trust-engine"
+        });
+      }
       if (resolution.band === "quarantined") {
         this.emitEvent({
           type: "quarantine.enforced",
@@ -2261,10 +2322,19 @@ export class TrustPlatform {
   }
 
   shapeResolutionResponse(resolution, mode) {
+    const upgraded = {
+      ...resolution,
+      agentId: resolution.subject_id,
+      trustState: resolution.trust_state ?? "UNKNOWN",
+      trustVector: resolution.trust_vector ?? null,
+      policy: resolution.trust_policy ?? null,
+      evidence: resolution.trust_evidence ?? null,
+      agenticMarket: resolution.agentic_market ?? null
+    };
     if (["minimal", "standard", "explain", "audit"].includes(mode)) {
-      return resolution;
+      return upgraded;
     }
-    return resolution;
+    return upgraded;
   }
 
   candidateBand(score) {
@@ -2301,7 +2371,8 @@ export class TrustPlatform {
           snapshot,
           context: input.context ?? {},
           policy,
-          nowIso: nowIso()
+          nowIso: nowIso(),
+          trustConfig: this.trustConfig
         });
         const trustScore = resolution.score;
         const band = resolution.band;
@@ -2577,7 +2648,8 @@ export class TrustPlatform {
           snapshot,
           context,
           policy,
-          nowIso: nowIso()
+          nowIso: nowIso(),
+          trustConfig: this.trustConfig
         });
         const domainFit = Number(snapshot.vector.domain_competence?.[context.domain] ?? 0.2);
         const executionReliability = Number(snapshot.vector.execution_reliability ?? 0.5);
@@ -2848,7 +2920,8 @@ export class TrustPlatform {
           snapshot: tracedSnapshot ?? snapshot,
           context: trace.context,
           policy,
-          nowIso: resolution.created_at
+          nowIso: resolution.created_at,
+          trustConfig: this.trustConfig
         });
         replay = {
           matches: recomputed.score === resolution.score && recomputed.band === resolution.band && recomputed.decision === resolution.decision,

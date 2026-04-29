@@ -33,6 +33,18 @@ function parseTextBody(text) {
   }
 }
 
+function withTimeout(timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return { signal: undefined, dispose: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose: () => clearTimeout(timer)
+  };
+}
+
 export class UpstreamError extends Error {
   constructor(message, { status, body, method, route }) {
     super(message);
@@ -53,7 +65,7 @@ export class InfopunksApiClient {
     this.logger = logger;
   }
 
-  async request(method, route, { body, query, headers, adapterTraceId } = {}) {
+  async request(method, route, { body, query, headers, adapterTraceId, timeoutMs } = {}) {
     const url = `${this.baseUrl}${route}${queryString(query)}`;
     const requestBody = body ? JSON.stringify(body) : undefined;
     const requestHeaders = {
@@ -74,11 +86,13 @@ export class InfopunksApiClient {
       auth_token_source: this.tokenSource
     });
 
+    const timeout = withTimeout(timeoutMs);
     try {
       const response = await fetch(url, {
         method,
         headers: requestHeaders,
-        body: requestBody
+        body: requestBody,
+        signal: timeout.signal
       });
       const responseText = await response.text();
       const payload = parseTextBody(responseText);
@@ -123,6 +137,8 @@ export class InfopunksApiClient {
         error_cause: cause?.message ?? String(cause ?? "")
       });
       throw error;
+    } finally {
+      timeout.dispose();
     }
   }
 
@@ -160,7 +176,7 @@ export class InfopunksApiClient {
       headers: idempotencyKey ? { "idempotency-key": idempotencyKey } : {}
     });
   }
-  resolveTrust(input, adapterTraceId) { return this.request("POST", "/v1/trust/resolve", { body: input, adapterTraceId }); }
+  resolveTrust(input, adapterTraceId, options = {}) { return this.request("POST", "/v1/trust/resolve", { body: input, adapterTraceId, ...options }); }
   selectValidators(input, adapterTraceId) { return this.request("POST", "/v1/routing/select-validator", { body: input, adapterTraceId }); }
   selectExecutor(input, adapterTraceId) { return this.request("POST", "/v1/routing/select-executor", { body: input, adapterTraceId }); }
   evaluateDispute(input, adapterTraceId) { return this.request("POST", "/v1/disputes/evaluate", { body: input, adapterTraceId }); }

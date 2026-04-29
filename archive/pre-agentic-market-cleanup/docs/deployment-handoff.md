@@ -26,6 +26,15 @@ This checklist is the final operator handoff for deploying Infopunks Trust Layer
 - `INFOPUNKS_PORTABILITY_SIGNING_KEY`
 - `INFOPUNKS_SSE_MAX_STREAMS_PER_KEY`
 - `INFOPUNKS_WEBHOOK_RETRY_BASE_MS`
+- `TRUST_DECAY_HALF_LIFE_HOURS`
+- `TRUST_MIN_VERIFIED_SCORE`
+- `TRUST_RISKY_THRESHOLD`
+- `TRUST_QUARANTINE_THRESHOLD`
+- `TRUST_MAX_RECOVERY_PER_EVENT`
+- `TRUST_REPLAY_PENALTY`
+- `TRUST_DUPLICATE_PAYMENT_PENALTY`
+- `TRUST_MALFORMED_PAYLOAD_PENALTY`
+- `TRUST_VERIFIER_DELAY_PENALTY`
 
 ### Site (required)
 
@@ -122,6 +131,7 @@ npm run mcp:adapter
 
 ### MCP Adapter
 
+- `GET /health` (lightweight liveness for Render; no DB/payment/upstream dependency)
 - `GET /healthz`
 - `GET /marketplace/readiness`
 - `GET /.well-known/x402-bazaar.json`
@@ -135,6 +145,10 @@ npm run mcp:adapter
 
 - `scripts/mcp-adapter-security-smoke.sh <base_url>`
 - `scripts/agentic-market-readiness.sh <base_url>`
+- `npm run bootstrap:subject -- --subject-id agent_001 --base-url <core_api_url> --api-key <core_api_key>`
+
+Render note:
+- Set MCP adapter health check path to `/health` (not `/mcp`).
 
 ## 5) Production Go/No-Go Gates
 
@@ -152,3 +166,26 @@ No-Go if any are false:
 - Missing verifier URL/credentials in facilitator mode
 - Missing admin token or webhook auth in non-local HTTP mode
 - Local-only state/rate-limit backends used in declared multi-instance deployment
+
+## 6) First Paid Trust Call (Reproducible)
+
+1. Bootstrap a subject in core API:
+
+```bash
+npm run bootstrap:subject -- \
+  --subject-id agent_001 \
+  --base-url https://infopunks-core-api.onrender.com \
+  --api-key <core_api_key>
+```
+
+2. Run buyer client against adapter with testnet wallet:
+
+```bash
+cd x402-buyer-test
+node test-x402.mjs
+```
+
+3. Expected success shape:
+
+- HTTP `200`
+- body includes `entity_id`, `trust_score`, `trust_state`, `trust_vector`, `risk_level`, `confidence`, `policy`

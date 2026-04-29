@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { __testOnly } from "../services/mcp-adapter/src/transport/http-server.mjs";
 import { loadEnv } from "../services/mcp-adapter/src/config/env.mjs";
+import { X402Verifier } from "../services/mcp-adapter/src/payments/x402-verifier.mjs";
 
 function withEnv(overrides, fn) {
   const snapshot = new Map();
@@ -31,6 +32,9 @@ test("statusFromAdapterErrorCode maps payment errors to 402/409", () => {
   assert.equal(__testOnly.statusFromAdapterErrorCode("ENTITLEMENT_REQUIRED"), 402);
   assert.equal(__testOnly.statusFromAdapterErrorCode("PAYMENT_VERIFICATION_FAILED"), 402);
   assert.equal(__testOnly.statusFromAdapterErrorCode("PAYMENT_REPLAY_DETECTED"), 409);
+  assert.equal(__testOnly.statusFromAdapterErrorCode("REPLAY_DETECTED"), 409);
+  assert.equal(__testOnly.statusFromAdapterErrorCode("IDEMPOTENCY_CONFLICT"), 409);
+  assert.equal(__testOnly.statusFromAdapterErrorCode("REQUEST_TIMESTAMP_INVALID"), 400);
 });
 
 test("challengeHeaders include discovery, pricing and payment rails", () => {
@@ -47,9 +51,14 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
       x402PricePerUnitAtomic: "10000",
       x402PaymentTimeoutSeconds: 300,
       x402Eip712Name: "USD Coin",
-      x402Eip712Version: "2"
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "openfacilitator"
     },
-    { pricing: { units: 2 } }
+    {
+      pricing: { units: 2 },
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" }
+    }
   );
 
   assert.equal(headers["x402-required"], "true");
@@ -63,10 +72,37 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
-  assert.match(headers["x402-discovery"], /\/\.well-known\/x402-bazaar\.json$/);
+  assert.equal(decoded.resource.description.includes("machine-readable risk context"), true);
+  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.resource.mimeType, "application/json");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
+  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
+  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
+  assert.deepEqual(
+    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
+    { valid: true }
+  );
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.input,
+      decoded.resource.extensions.bazaar.schema.properties.input
+    ),
+    []
+  );
+  assert.ok(decoded.resource.inputSchema);
+  assert.ok(decoded.resource.outputSchema);
+  assert.deepEqual(decoded.resource.outputSchema.required, ["subject_id", "trust_score", "route"]);
+  assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
-test("challengeHeaders normalize legacy base network alias to Base Sepolia CAIP-2", () => {
+test("challengeHeaders normalize base network alias to Base mainnet CAIP-2", () => {
   const headers = __testOnly.challengeHeaders(
     {
       publicUrl: "https://mcp.infopunks.ai",
@@ -74,6 +110,26 @@ test("challengeHeaders normalize legacy base network alias to Base Sepolia CAIP-
       port: 4021,
       x402AcceptedAssets: ["USDC"],
       x402SupportedNetworks: ["base"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300
+    },
+    { pricing: { units: 1 } }
+  );
+
+  assert.equal(headers["x402-supported-networks"], "eip155:8453");
+});
+
+test("challengeHeaders keep explicit Base Sepolia alias for testnet proof", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["base-sepolia"],
       x402PaymentScheme: "exact",
       x402PaymentAssetAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
       x402PayTo: "0x1111111111111111111111111111111111111111",
@@ -84,6 +140,108 @@ test("challengeHeaders normalize legacy base network alias to Base Sepolia CAIP-
   );
 
   assert.equal(headers["x402-supported-networks"], "eip155:84532");
+});
+
+test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet USDC", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "cdp"
+    },
+    { pricing: { units: 1 } }
+  );
+
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.equal(decoded.x402Version, 2);
+  assert.equal(decoded.accepts[0].scheme, "exact");
+  assert.equal(decoded.accepts[0].network, "eip155:8453");
+  assert.equal(decoded.accepts[0].amount, "10000");
+  assert.equal(decoded.accepts[0].asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
+  assert.equal(decoded.accepts[0].payTo, "0x1111111111111111111111111111111111111111");
+  assert.equal(decoded.accepts[0].extra.name, "USD Coin");
+  assert.equal(decoded.accepts[0].extra.version, "2");
+  assert.equal(decoded.accepts[0].extra.symbol, "USDC");
+  assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
+  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.resource.mimeType, "application/json");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
+  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
+  assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
+    type: "http",
+    method: "POST",
+    bodyType: "json",
+    body: {
+      subject_id: "agent_public_paid_proof",
+      context: {
+        action: "execute_task",
+        domain: "agentic_market",
+        capital_at_risk_usd: 1000
+      }
+    }
+  });
+  assert.equal(decoded.resource.extensions.bazaar.info.output.type, "json");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.subject_id, "agent_public_paid_proof");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.status, "allow");
+  assert.deepEqual(
+    decoded.resource.extensions.bazaar.info.tags,
+    ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
+  );
+  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
+  assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
+  assert.deepEqual(
+    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
+    { valid: true }
+  );
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.input,
+      decoded.resource.extensions.bazaar.schema.properties.input
+    ),
+    []
+  );
+  assert.deepEqual(
+    __testOnly.validateJsonSchema(
+      decoded.resource.extensions.bazaar.info.output,
+      decoded.resource.extensions.bazaar.schema.properties.output
+    ),
+    []
+  );
+});
+
+test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "cdp"
+    },
+    { pricing: { units: 1 } }
+  );
+
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  assert.notEqual(decoded.accepts[0].extra.name, "USDC");
+  assert.equal(decoded.accepts[0].extra.name, "USD Coin");
 });
 
 test("trust-score helper mapping emits commercial response format", () => {
@@ -111,11 +269,55 @@ test("trust-score helper mapping emits commercial response format", () => {
   assert.ok(Array.isArray(response.signals));
 });
 
+test("v1 resolve-trust response exposes Agentic.Market receipt contract", () => {
+  const request = __testOnly.normalizeTrustScoreRequest({
+    subject_id: "agent_221",
+    context: { task_type: "market_analysis", domain: "crypto", risk_level: "high" }
+  });
+  const response = __testOnly.toResolveTrustV1Response(
+    request,
+    {
+      result: {
+        subject_id: "agent_221",
+        score: 67,
+        band: "watch",
+        confidence: 0.79,
+        decision: "allow_with_validation",
+        reason_codes: ["recent_validator_reversal"]
+      },
+      meta: {
+        payment_receipt_id: "xrc_test",
+        x402_receipt: {
+          verifier_reference: "vr_test",
+          settlement_status: "provisional",
+          network: "eip155:8453",
+          asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913"
+        }
+      }
+    },
+    {
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913"
+    }
+  );
+
+  assert.equal(response.subject_id, "agent_221");
+  assert.equal(response.trust_score, 67);
+  assert.equal(response.risk_level, "medium");
+  assert.equal(response.route, "degrade");
+  assert.equal(response.status, "degrade");
+  assert.deepEqual(response.reasons, ["recent_validator_reversal"]);
+  assert.equal(response.receipt.x402_verified, true);
+  assert.equal(response.receipt.network, "eip155:8453");
+  assert.equal(response.receipt.asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
+});
+
 test("loadEnv parses payment asset/network listing metadata defaults", () => {
   const config = withEnv(
     {
       INFOPUNKS_ENVIRONMENT: "local",
       X402_REQUIRED_DEFAULT: "false",
+      X402_FACILITATOR_PROVIDER: null,
       X402_ACCEPTED_ASSETS: null,
       X402_SUPPORTED_NETWORKS: null
     },
@@ -125,6 +327,111 @@ test("loadEnv parses payment asset/network listing metadata defaults", () => {
   assert.deepEqual(config.x402AcceptedAssets, ["USDC"]);
   assert.deepEqual(config.x402SupportedNetworks, ["eip155:84532"]);
   assert.equal(config.x402VerifierUrl, "https://x402.org/facilitator");
+  assert.equal(config.x402FacilitatorProvider, "openfacilitator");
+});
+
+test("loadEnv validates CDP facilitator mode only when selected", () => {
+  const config = withEnv(
+    {
+      INFOPUNKS_ENVIRONMENT: "local",
+      X402_FACILITATOR_PROVIDER: "cdp",
+      X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      X402_NETWORK: "eip155:8453",
+      X402_SCHEME: "exact",
+      X402_ASSET: "USDC",
+      X402_EIP712_NAME: "USD Coin",
+      X402_EIP712_VERSION: "2",
+      X402_PRICE: "0.01",
+      X402_PRICE_USD: null,
+      X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+      CDP_API_KEY_ID: "placeholder-key-id",
+      CDP_API_KEY_SECRET: "placeholder-secret"
+    },
+    () => loadEnv()
+  );
+
+  assert.equal(config.x402FacilitatorProvider, "cdp");
+  assert.equal(config.x402VerifierUrl, "https://api.cdp.coinbase.com/platform/v2/x402");
+  assert.equal(config.x402PaymentScheme, "exact");
+  assert.equal(config.x402PricePerUnitAtomic, "10000");
+});
+
+test("loadEnv rejects cdp base mainnet usdc when X402_EIP712_NAME is USDC", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_FACILITATOR_PROVIDER: "cdp",
+          X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          X402_NETWORK: "eip155:8453",
+          X402_SCHEME: "exact",
+          X402_ASSET: "USDC",
+          X402_EIP712_NAME: "USDC",
+          X402_EIP712_VERSION: "2",
+          X402_PRICE: "0.01",
+          X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+          X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          CDP_API_KEY_ID: "placeholder-key-id",
+          CDP_API_KEY_SECRET: "placeholder-secret"
+        },
+        () => loadEnv()
+      ),
+    /X402_EIP712_NAME=USD Coin is required/i
+  );
+});
+
+test("loadEnv does not require CDP credentials for default OpenFacilitator mode", () => {
+  const config = withEnv(
+    {
+      INFOPUNKS_ENVIRONMENT: "local",
+      X402_FACILITATOR_PROVIDER: null,
+      CDP_API_KEY_ID: null,
+      CDP_API_KEY_SECRET: null,
+      X402_REQUIRED_DEFAULT: "false"
+    },
+    () => loadEnv()
+  );
+
+  assert.equal(config.x402FacilitatorProvider, "openfacilitator");
+});
+
+test("loadEnv rejects CDP mode without CDP secrets", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_FACILITATOR_PROVIDER: "cdp",
+          X402_FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          X402_NETWORK: "eip155:8453",
+          X402_SCHEME: "exact",
+          X402_ASSET: "USDC",
+          X402_PRICE: "0.01",
+          X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+          X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          CDP_API_KEY_ID: null,
+          CDP_API_KEY_SECRET: null
+        },
+        () => loadEnv()
+      ),
+    /CDP_API_KEY_ID is required/i
+  );
+});
+
+test("loadEnv enforces facilitator mode for deterministic payment flow", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          INFOPUNKS_ENVIRONMENT: "local",
+          X402_VERIFIER_MODE: "strict"
+        },
+        () => loadEnv()
+      ),
+    /must be facilitator/i
+  );
 });
 
 test("loadEnv requires explicit core base URL outside local/test", () => {
@@ -156,18 +463,167 @@ test("loadEnv rejects localhost core URL in non-local environments", () => {
   );
 });
 
+test("cdp verifier includes top-level x402Version in v2 verify payload", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(JSON.stringify({ isValid: true, verifier_reference: "vr_cdp" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret",
+    timeoutMs: 1000,
+    logger: { info() {}, warn() {}, error() {} }
+  });
+  verifier.authHeaders = async () => ({});
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xnonce_ready_test_cdp"
+      }
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_ready_cdp",
+    entitlement: null
+  });
+
+  assert.equal(postedBody.x402Version, 2);
+  assert.equal(postedBody.paymentPayload.x402Version, 2);
+  assert.equal(result.ok, true);
+});
+
+test("openfacilitator verifier request body is unchanged for native x402 payload", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(JSON.stringify({ isValid: true, verifier_reference: "vr_open" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "openfacilitator",
+    verifierUrl: "https://x402.org/facilitator",
+    timeoutMs: 1000,
+    logger: null
+  });
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        nonce: "0xnonce_ready_test_open"
+      }
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_ready_open",
+    entitlement: null
+  });
+
+  assert.equal(Object.hasOwn(postedBody, "x402Version"), false);
+  assert.equal(postedBody.paymentPayload.x402Version, 2);
+  assert.equal(result.ok, true);
+});
+
 test("loadEnv requires explicit INFOPUNKS_INTERNAL_SERVICE_TOKEN in non-local environments", () => {
   assert.throws(
     () =>
       withEnv(
         {
+          NODE_ENV: "production",
           INFOPUNKS_ENVIRONMENT: "production",
+          PUBLIC_BASE_URL: "https://mcp.infopunks.ai",
           INFOPUNKS_CORE_BASE_URL: "https://infopunks-core-api.onrender.com",
           INFOPUNKS_INTERNAL_SERVICE_TOKEN: null,
-          INFOPUNKS_BACKEND_API_KEY: "some-token"
+          INFOPUNKS_BACKEND_API_KEY: "some-token",
+          MCP_ADAPTER_ADMIN_TOKEN: "admin-token",
+          X402_FACILITATOR_URL: "https://verifier.example.com",
+          X402_NETWORK: "base",
+          X402_ASSET: "USDC",
+          X402_PRICE_USD: "0.01",
+          X402_PAYMENT_ASSET_ADDRESS: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+          X402_PAY_TO: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+          ALLOW_TESTNET: "false",
+          ALLOW_RELAXED_PAYMENT: "false",
+          X402_SETTLEMENT_WEBHOOK_HMAC_SECRET: "whsec",
+          MCP_ENTITLEMENT_ISSUER: "agentic.market",
+          MCP_ENTITLEMENT_AUDIENCE: "infopunks-mcp",
+          MCP_ENTITLEMENT_RS256_PUBLIC_KEY: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqh...\n-----END PUBLIC KEY-----"
         },
         () => loadEnv()
       ),
     /must be explicitly configured/i
   );
+});
+
+test("loadEnv places local adapter runtime defaults under DATA_DIR when provided", () => {
+  const config = withEnv(
+    {
+      INFOPUNKS_ENVIRONMENT: "local",
+      DATA_DIR: "/tmp/infopunks-test-data",
+      MCP_ADAPTER_STATE_DB_PATH: null,
+      INFOPUNKS_MCP_IDENTITY_MAP_PATH: null
+    },
+    () => loadEnv()
+  );
+
+  assert.equal(config.stateDbPath, "/tmp/infopunks-test-data/mcp-adapter/adapter-state.db");
+  assert.equal(config.identityMapPath, "/tmp/infopunks-test-data/mcp-adapter/external_identity_mappings.json");
 });

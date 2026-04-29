@@ -142,7 +142,7 @@ test("facilitator verifier rejects ok response without replay identity", async (
   assert.equal(result.reason, "PAYMENT_VERIFICATION_FAILED");
 });
 
-test("facilitator verifier accepts x402-native payment payload/requirements shape", async (t) => {
+test("openfacilitator verifier keeps x402-native payment payload/requirements shape unchanged", async (t) => {
   const originalFetch = globalThis.fetch;
   let postedBody = null;
   globalThis.fetch = async (_url, init) => {
@@ -165,6 +165,7 @@ test("facilitator verifier accepts x402-native payment payload/requirements shap
 
   const verifier = new X402Verifier({
     mode: "facilitator",
+    facilitatorProvider: "openfacilitator",
     verifierUrl: "http://facilitator.test",
     timeoutMs: 2000,
     logger: null
@@ -201,10 +202,409 @@ test("facilitator verifier accepts x402-native payment payload/requirements shap
     entitlement: null
   });
 
+  assert.equal(Object.hasOwn(postedBody, "x402Version"), false);
   assert.equal(postedBody.paymentPayload.x402Version, 2);
   assert.equal(postedBody.paymentRequirements.network, "eip155:84532");
   assert.equal(result.ok, true);
   assert.equal(result.nonce, "0xabc");
+});
+
+test("openfacilitator verifier preserves nonce/signature arrays without CDP normalization", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedBody = JSON.parse(init?.body ?? "{}");
+    return new Response(
+      JSON.stringify({
+        isValid: true,
+        verifier_reference: "rcpt_124",
+        settlement_status: "settled"
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "openfacilitator",
+    verifierUrl: "http://facilitator.test",
+    timeoutMs: 2000,
+    logger: null
+  });
+
+  const nonceArray = Array.from({ length: 32 }, (_v, idx) => idx + 1);
+  const signatureArray = Array.from({ length: 65 }, () => 187);
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        to: "0x1111111111111111111111111111111111111111",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: nonceArray
+      },
+      signature: signatureArray
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_open_array",
+    entitlement: null
+  });
+
+  assert.equal(Array.isArray(postedBody.paymentPayload.payload.authorization.nonce), true);
+  assert.equal(Array.isArray(postedBody.paymentPayload.payload.signature), true);
+  assert.deepEqual(postedBody.paymentPayload.payload.authorization.nonce, nonceArray);
+  assert.deepEqual(postedBody.paymentPayload.payload.signature, signatureArray);
+  assert.equal(result.ok, true);
+});
+
+test("cdp verifier sends v2 payment shape with top-level x402Version", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedVerifyBody = null;
+  let postedSettleBody = null;
+  const cdpShapeLogs = [];
+  const cdpExtensionLogs = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init?.body ?? "{}");
+    if (String(url).endsWith("/verify")) {
+      postedVerifyBody = body;
+      return new Response(
+        JSON.stringify({
+          isValid: true,
+          verifier_reference: "rcpt_cdp_123",
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "EXTENSION-RESPONSES": JSON.stringify({
+              extensions: [
+                {
+                  name: "bazaar",
+                  status: "accepted",
+                  message: "discovery metadata accepted"
+                }
+              ]
+            })
+          }
+        }
+      );
+    }
+    if (String(url).endsWith("/settle")) {
+      postedSettleBody = body;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "EXTENSION-RESPONSES": "extension=bazaar;status=processing;reason=awaiting indexing"
+          }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({ ok: false }),
+      {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret",
+    timeoutMs: 2000,
+    logger: {
+      info(payload) {
+        if (payload?.event === "cdp_facilitator_payload_shape") {
+          cdpShapeLogs.push(payload);
+        }
+        if (payload?.event === "cdp_extension_responses") {
+          cdpExtensionLogs.push(payload);
+        }
+      },
+      warn() {},
+      error() {}
+    }
+  });
+  verifier.authHeaders = async () => ({});
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USDC",
+        version: "2",
+        symbol: "USDC"
+      }
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        to: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
+    }
+  };
+
+  const payment = {
+    rail: "x402",
+    paymentPayload,
+    paymentRequirements: paymentPayload.accepted
+  };
+  const result = await verifier.verify({
+    payment,
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_cdp",
+    entitlement: null
+  });
+  const settleResult = await verifier.settle({
+    payment,
+    adapterTraceId: "mcp_trc_native_cdp"
+  });
+
+  assert.equal(postedVerifyBody.x402Version, 2);
+  assert.equal(postedVerifyBody.paymentPayload.x402Version, 2);
+  assert.deepEqual(postedVerifyBody.paymentRequirements, paymentPayload.accepted);
+  assert.equal(postedVerifyBody.paymentRequirements.amount, "10000");
+  assert.equal(typeof postedVerifyBody.paymentRequirements.amount, "string");
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.from, paymentPayload.payload.authorization.from);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.to, paymentPayload.payload.authorization.to);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.value, "10000");
+  assert.equal(typeof postedVerifyBody.paymentPayload.payload.authorization.value, "string");
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, paymentPayload.payload.authorization.nonce);
+  assert.equal(postedVerifyBody.paymentPayload.payload.signature, paymentPayload.payload.signature);
+  assert.equal(result.ok, true);
+  assert.equal(settleResult.ok, true);
+  assert.deepEqual(postedSettleBody.paymentRequirements, postedVerifyBody.paymentRequirements);
+  assert.deepEqual(postedSettleBody.paymentPayload, postedVerifyBody.paymentPayload);
+
+  const verifyShapeLog = cdpShapeLogs.find((entry) => entry.phase === "verify");
+  const settleShapeLog = cdpShapeLogs.find((entry) => entry.phase === "settle");
+  assert.ok(verifyShapeLog);
+  assert.ok(settleShapeLog);
+  assert.equal(verifyShapeLog.has_x402Version, true);
+  assert.equal(verifyShapeLog.x402Version, 2);
+  assert.equal(verifyShapeLog.req_amount, "10000");
+  assert.equal(verifyShapeLog.payload_auth_from, paymentPayload.payload.authorization.from);
+  assert.equal(verifyShapeLog.payload_auth_to, paymentPayload.payload.authorization.to);
+  assert.equal(verifyShapeLog.payload_auth_value, "10000");
+  assert.equal(verifyShapeLog.payload_nonce_len, 32);
+  assert.equal(verifyShapeLog.payload_nonce_type, "string");
+  assert.equal(verifyShapeLog.payload_nonce_is_array, false);
+  assert.equal(verifyShapeLog.payload_nonce_is_hex, true);
+  assert.equal(verifyShapeLog.payload_nonce_string_len, 66);
+  assert.equal(verifyShapeLog.has_signature, true);
+  assert.equal(verifyShapeLog.signature_len, 65);
+  assert.equal(verifyShapeLog.signature_type, "string");
+  assert.equal(verifyShapeLog.signature_is_array, false);
+  assert.equal(verifyShapeLog.signature_is_hex, true);
+  assert.equal(verifyShapeLog.signature_string_len, 132);
+  assert.equal(verifyShapeLog.auth_value_type, "string");
+  assert.equal(verifyShapeLog.auth_validAfter_type, "string");
+  assert.equal(verifyShapeLog.auth_validBefore_type, "string");
+  assert.equal(verifyShapeLog.req_extra_name, "USDC");
+  assert.equal(verifyShapeLog.req_extra_version, "2");
+  assert.equal(verifyShapeLog.req_extra_symbol, "USDC");
+
+  const verifyExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "verify");
+  const settleExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "settle");
+  assert.ok(verifyExtensionLog);
+  assert.ok(settleExtensionLog);
+  assert.equal(verifyExtensionLog.cdp_status, 200);
+  assert.equal(verifyExtensionLog.extension_responses_header_present, true);
+  assert.equal(
+    verifyExtensionLog.extension_responses_header_value,
+    "{\"extensions\":[{\"name\":\"bazaar\",\"status\":\"accepted\",\"message\":\"discovery metadata accepted\"}]}"
+  );
+  assert.deepEqual(verifyExtensionLog.extension_responses, [
+    {
+      extension_name: "bazaar",
+      status: "accepted",
+      message: "discovery metadata accepted"
+    }
+  ]);
+  assert.equal(settleExtensionLog.cdp_status, 200);
+  assert.equal(settleExtensionLog.extension_responses_header_present, true);
+  assert.equal(
+    settleExtensionLog.extension_responses_header_value,
+    "extension=bazaar;status=processing;reason=awaiting indexing"
+  );
+  assert.deepEqual(settleExtensionLog.extension_responses, [
+    {
+      extension_name: "bazaar",
+      status: "processing",
+      reason: "awaiting indexing"
+    }
+  ]);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+});
+
+test("cdp verifier normalizes nonce/signature byte arrays to hex strings for verify and settle", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedVerifyBody = null;
+  let postedSettleBody = null;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init?.body ?? "{}");
+    if (String(url).endsWith("/verify")) {
+      postedVerifyBody = body;
+      return new Response(
+        JSON.stringify({
+          isValid: true,
+          verifier_reference: "rcpt_cdp_norm_1",
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    if (String(url).endsWith("/settle")) {
+      postedSettleBody = body;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({ ok: false }),
+      {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret",
+    timeoutMs: 2000,
+    logger: null
+  });
+  verifier.authHeaders = async () => ({});
+
+  const nonceArray = Array.from({ length: 32 }, (_v, idx) => idx + 1);
+  const signatureArray = Array.from({ length: 65 }, () => 171);
+  const expectedNonceHex = `0x${Buffer.from(nonceArray).toString("hex")}`;
+  const expectedSignatureHex = `0x${Buffer.from(signatureArray).toString("hex")}`;
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USDC",
+        version: "2",
+        symbol: "USDC"
+      }
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        to: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+        value: "10000",
+        validAfter: "1777403986",
+        validBefore: "1777404286",
+        nonce: nonceArray
+      },
+      signature: signatureArray
+    }
+  };
+
+  const payment = {
+    rail: "x402",
+    paymentPayload,
+    paymentRequirements: paymentPayload.accepted
+  };
+  const result = await verifier.verify({
+    payment,
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_cdp_norm",
+    entitlement: null
+  });
+  const settleResult = await verifier.settle({
+    payment,
+    adapterTraceId: "mcp_trc_native_cdp_norm"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(settleResult.ok, true);
+  assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, expectedNonceHex);
+  assert.equal(postedVerifyBody.paymentPayload.payload.signature, expectedSignatureHex);
+  assert.match(postedVerifyBody.paymentPayload.payload.authorization.nonce, /^0x[0-9a-f]{64}$/i);
+  assert.match(postedVerifyBody.paymentPayload.payload.signature, /^0x[0-9a-f]{130}$/i);
+  assert.equal(postedSettleBody.paymentPayload.payload.authorization.nonce, expectedNonceHex);
+  assert.equal(postedSettleBody.paymentPayload.payload.signature, expectedSignatureHex);
 });
 
 test("entitlement service creates provisional receipt and spend state", async (t) => {
@@ -753,7 +1153,254 @@ test("entitlement service rejects duplicate proof even when replay strict is dis
         adapterTraceId: "mcp_trc_dup_2",
         entitlement: null
       }),
-    (error) => error?.code === "PAYMENT_REPLAY_DETECTED"
+    (error) => error?.code === "REPLAY_DETECTED"
+  );
+});
+
+test("entitlement service rejects reused nonce with REPLAY_DETECTED", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  await entitlementService.authorizeAndBill({
+    operation: "resolve_trust",
+    payment: { rail: "x402", payer: "payer-replay", units_authorized: 4, nonce: "nonce-replay-1" },
+    fallbackPayer: "payer-replay",
+    spendLimitUnits: 100,
+    adapterTraceId: "mcp_trc_replay_1",
+    entitlement: null
+  });
+
+  await assert.rejects(
+    () =>
+      entitlementService.authorizeAndBill({
+        operation: "resolve_trust",
+        payment: { rail: "x402", payer: "payer-replay", units_authorized: 4, nonce: "nonce-replay-1" },
+        fallbackPayer: "payer-replay",
+        spendLimitUnits: 100,
+        adapterTraceId: "mcp_trc_replay_2",
+        entitlement: null
+      }),
+    (error) => error?.code === "REPLAY_DETECTED"
+  );
+});
+
+test("idempotency returns cached response for same key and payload", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  let handlerCalls = 0;
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async () => {
+        handlerCalls += 1;
+        return {
+          subject_id: "agent_1",
+          score: 55,
+          band: "watch",
+          confidence: 0.7,
+          decision: "allow_with_validation",
+          reason_codes: ["idempotency_test"]
+        };
+      }
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const tool = findTool("resolve_trust");
+  const args = {
+    subject_id: "agent_1",
+    context: { task_type: "market_analysis" },
+    payment: {
+      rail: "x402",
+      payer: "payer-idem",
+      units_authorized: 5,
+      nonce: "nonce-idem-1",
+      idempotency_key: "idem-key-1",
+      request_timestamp: Date.now()
+    }
+  };
+
+  const first = await server.executeTool(tool, args, "mcp_trc_idem_1");
+  const second = await server.executeTool(tool, args, "mcp_trc_idem_2");
+
+  assert.equal(first.result.score, 55);
+  assert.equal(second.result.score, 55);
+  assert.equal(handlerCalls, 1);
+});
+
+test("idempotency rejects same key with different payload", async (t) => {
+  const store = makeStore(t);
+  const verifier = new X402Verifier({ mode: "stub", logger: null });
+  const entitlementService = new EntitlementService({
+    verifier,
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async ({ args: currentArgs }) => ({
+        subject_id: currentArgs.subject_id,
+        score: currentArgs.context?.risk_level === "high" ? 30 : 65,
+        band: "watch",
+        confidence: 0.6,
+        decision: "allow_with_validation",
+        reason_codes: ["idempotency_conflict_test"]
+      })
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const tool = findTool("resolve_trust");
+  await server.executeTool(tool, {
+    subject_id: "agent_1",
+    context: { task_type: "market_analysis", risk_level: "low" },
+    payment: {
+      rail: "x402",
+      payer: "payer-idem-conflict",
+      units_authorized: 5,
+      nonce: "nonce-idem-2",
+      idempotency_key: "idem-key-2",
+      request_timestamp: Date.now()
+    }
+  }, "mcp_trc_idem_conflict_1");
+
+  await assert.rejects(
+    () => server.executeTool(tool, {
+      subject_id: "agent_1",
+      context: { task_type: "market_analysis", risk_level: "high" },
+      payment: {
+        rail: "x402",
+        payer: "payer-idem-conflict",
+        units_authorized: 5,
+        nonce: "nonce-idem-3",
+        idempotency_key: "idem-key-2",
+        request_timestamp: Date.now()
+      }
+    }, "mcp_trc_idem_conflict_2"),
+    (error) => error?.code === "IDEMPOTENCY_CONFLICT"
+  );
+});
+
+test("stale request timestamp is rejected", async (t) => {
+  const store = makeStore(t);
+  const entitlementService = new EntitlementService({
+    verifier: new X402Verifier({ mode: "stub", logger: null }),
+    store,
+    config: {
+      x402RequiredDefault: true,
+      x402ReplayStrict: true,
+      x402ReplayWindowSeconds: 600,
+      x402DailySpendLimitUnits: 100
+    },
+    logger: null
+  });
+
+  const server = new McpServer({
+    config: {
+      adapterName: "test-adapter",
+      adapterVersion: "test",
+      callerResolutionPolicy: "lookup-only",
+      x402RequiredDefault: true,
+      paidRequestTimestampWindowSeconds: 120,
+      x402VerifierMode: "stub"
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    metrics: { inc() {} },
+    rateLimiter: { hit() {} },
+    entitlementService,
+    subjectResolution: { resolveCaller: async () => ({ subject_id: "caller-1" }) },
+    apiClient: { health: async () => true },
+    toolHandlers: {
+      resolve_trust: async () => ({
+        subject_id: "agent_1",
+        score: 40,
+        band: "watch",
+        confidence: 0.5,
+        decision: "allow_with_validation",
+        reason_codes: []
+      })
+    },
+    tokenValidator: null,
+    store,
+    reconciliationService: { reconcileOnce: async () => ({ ok: true }) }
+  });
+
+  const staleTimestamp = Date.now() - 10 * 60 * 1000;
+  await assert.rejects(
+    () => server.executeTool(findTool("resolve_trust"), {
+      subject_id: "agent_1",
+      context: { task_type: "market_analysis" },
+      payment: {
+        rail: "x402",
+        payer: "payer-stale",
+        units_authorized: 5,
+        nonce: "nonce-stale",
+        idempotency_key: "idem-stale",
+        request_timestamp: staleTimestamp
+      }
+    }, "mcp_trc_stale"),
+    (error) => error?.code === "REQUEST_TIMESTAMP_INVALID"
   );
 });
 

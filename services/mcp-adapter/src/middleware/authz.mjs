@@ -4,7 +4,8 @@ export async function authorizePaidCall({
   args,
   callerSubjectId,
   adapterTraceId,
-  entitlement
+  entitlement,
+  requestGuard = null
 }) {
   return entitlementService.authorizeAndBill({
     operation,
@@ -12,6 +13,8 @@ export async function authorizePaidCall({
     fallbackPayer: callerSubjectId,
     spendLimitUnits: args.spend_limit_units,
     adapterTraceId,
-    entitlement
+    entitlement,
+    requestGuard,
+    subjectId: args.subject_id ?? null
   });
 }

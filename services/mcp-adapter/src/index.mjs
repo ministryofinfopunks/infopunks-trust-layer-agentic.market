@@ -16,17 +16,9 @@ import { createHttpTransport } from "./transport/http-server.mjs";
 import { createAdapterStateStore } from "./storage/factory.mjs";
 import { EntitlementTokenValidator } from "./security/entitlement-token.mjs";
 import { createIdentityMappingStore } from "./identity/mapping-store.mjs";
+import { createWarRoomFeed } from "./observability/war-room-feed.mjs";
 
-import { getPassportTool } from "./tools/get-passport.mjs";
 import { resolveTrustTool } from "./tools/resolve-trust.mjs";
-import { selectValidatorsTool } from "./tools/select-validators.mjs";
-import { selectExecutorTool } from "./tools/select-executor.mjs";
-import { evaluateDisputeTool } from "./tools/evaluate-dispute.mjs";
-import { getTraceReplayTool } from "./tools/get-trace-replay.mjs";
-import { getPromptPackTool } from "./tools/get-prompt-pack.mjs";
-import { exportPortabilityTool } from "./tools/export-portability.mjs";
-import { importPortabilityTool } from "./tools/import-portability.mjs";
-import { quoteRiskTool } from "./tools/quote-risk.mjs";
 
 const config = loadEnv();
 const logger = new Logger(config.logLevel);
@@ -44,12 +36,15 @@ const apiClient = new InfopunksApiClient({
 });
 const identityMappingStore = await createIdentityMappingStore(config);
 const mapper = new PassportMapper({ mapPath: config.identityMapPath, environment: config.environment, store: identityMappingStore });
-const subjectResolution = new SubjectResolutionService({ apiClient, mapper, config });
 const store = await createAdapterStateStore(config);
+const subjectResolution = new SubjectResolutionService({ apiClient, mapper, config, store });
 const verifier = new X402Verifier({
   mode: config.x402VerifierMode,
+  facilitatorProvider: config.x402FacilitatorProvider,
   verifierUrl: config.x402VerifierUrl,
   verifierApiKey: config.x402VerifierApiKey,
+  cdpApiKeyId: config.cdpApiKeyId,
+  cdpApiKeySecret: config.cdpApiKeySecret,
   timeoutMs: config.x402VerifierTimeoutMs,
   sharedSecret: config.x402SharedSecret,
   logger
@@ -71,16 +66,7 @@ const entitlementService = new EntitlementService({
 const rateLimiter = new AdapterRateLimiter(config.adapterRateLimitPerMinute, await createRateLimitStrategy(config));
 
 const toolHandlers = {
-  get_passport: getPassportTool,
-  resolve_trust: resolveTrustTool,
-  select_validators: selectValidatorsTool,
-  select_executor: selectExecutorTool,
-  evaluate_dispute: evaluateDisputeTool,
-  get_trace_replay: getTraceReplayTool,
-  get_prompt_pack: getPromptPackTool,
-  export_portability_bundle: exportPortabilityTool,
-  import_portability_bundle: importPortabilityTool,
-  quote_risk: quoteRiskTool
+  resolve_trust: resolveTrustTool
 };
 
 const server = new McpServer({
@@ -96,6 +82,7 @@ const server = new McpServer({
   store,
   reconciliationService
 });
+server.warRoomFeed = createWarRoomFeed({ store, config, logger });
 
 function startStdioTransport() {
   function writeMessage(message) {

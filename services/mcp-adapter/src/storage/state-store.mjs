@@ -143,6 +143,12 @@ export class AdapterStateStore {
           billed_units, receipt_id, internal_trace_id, details_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
+      insertBillingLedger: this.db.prepare(`
+        INSERT INTO billing_ledger (
+          ledger_id, adapter_trace_id, request_id, tool_name, payer, subject_id,
+          billed_units, receipt_id, network, asset, price_atomic, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
 
       spendByDay: this.db.prepare(`
         SELECT COALESCE(SUM(billed_units), 0) AS units
@@ -205,6 +211,51 @@ export class AdapterStateStore {
         WHERE lock_name = ? AND owner_id = ? AND expires_at >= ?
       `),
       releaseLock: this.db.prepare(`DELETE FROM distributed_locks WHERE lock_name = ? AND owner_id = ?`)
+      ,
+      getPaidIdempotency: this.db.prepare(`
+        SELECT key, request_hash, status_code, response_json, error_code, receipt_id, payer, subject_id,
+               nonce, mode, created_at, updated_at
+        FROM paid_idempotency
+        WHERE key = ?
+      `),
+      insertPaidIdempotency: this.db.prepare(`
+        INSERT INTO paid_idempotency (
+          key, request_hash, status_code, response_json, error_code, receipt_id, payer, subject_id,
+          nonce, mode, created_at, updated_at
+        ) VALUES (?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
+      `),
+      updatePaidIdempotency: this.db.prepare(`
+        UPDATE paid_idempotency
+        SET status_code = ?, response_json = ?, error_code = ?, receipt_id = ?, updated_at = ?
+        WHERE key = ?
+      `),
+      getTrustCache: this.db.prepare(`
+        SELECT subject_id, response_json, updated_at
+        FROM trust_cache
+        WHERE subject_id = ?
+      `),
+      upsertTrustCache: this.db.prepare(`
+        INSERT INTO trust_cache (subject_id, response_json, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(subject_id) DO UPDATE SET
+          response_json = excluded.response_json,
+          updated_at = excluded.updated_at
+      `),
+      insertWarRoomEvent: this.db.prepare(`
+        INSERT INTO war_room_events (
+          event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
+          mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
+          network, pay_to, price, amount, error_code, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      listWarRoomEvents: this.db.prepare(`
+        SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
+               mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
+               network, pay_to, price, amount, error_code, reason
+        FROM war_room_events
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `)
     };
   }
 
@@ -283,6 +334,24 @@ export class AdapterStateStore {
       CREATE INDEX IF NOT EXISTS idx_request_trace ON adapter_request_log(adapter_trace_id);
       CREATE INDEX IF NOT EXISTS idx_request_tool_time ON adapter_request_log(tool_name, created_at);
 
+      CREATE TABLE IF NOT EXISTS billing_ledger (
+        ledger_id TEXT PRIMARY KEY,
+        adapter_trace_id TEXT,
+        request_id TEXT,
+        tool_name TEXT NOT NULL,
+        payer TEXT,
+        subject_id TEXT,
+        billed_units INTEGER NOT NULL,
+        receipt_id TEXT,
+        network TEXT,
+        asset TEXT,
+        price_atomic TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_billing_ledger_receipt ON billing_ledger(receipt_id);
+      CREATE INDEX IF NOT EXISTS idx_billing_ledger_created ON billing_ledger(created_at);
+
       CREATE TABLE IF NOT EXISTS entitlement_sessions (
         session_id TEXT PRIMARY KEY,
         token_jti TEXT UNIQUE,
@@ -305,6 +374,53 @@ export class AdapterStateStore {
         expires_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS paid_idempotency (
+        key TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        status_code INTEGER,
+        response_json TEXT,
+        error_code TEXT,
+        receipt_id TEXT,
+        payer TEXT,
+        subject_id TEXT,
+        nonce TEXT,
+        mode TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_paid_idempotency_created ON paid_idempotency(created_at);
+
+      CREATE TABLE IF NOT EXISTS trust_cache (
+        subject_id TEXT PRIMARY KEY,
+        response_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_trust_cache_updated_at ON trust_cache(updated_at);
+
+      CREATE TABLE IF NOT EXISTS war_room_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        payer TEXT,
+        subject_id TEXT,
+        trust_score REAL,
+        trust_tier TEXT,
+        mode TEXT,
+        confidence REAL,
+        status TEXT,
+        route TEXT,
+        risk_level TEXT,
+        receipt_id TEXT,
+        facilitator_provider TEXT,
+        network TEXT,
+        pay_to TEXT,
+        price TEXT,
+        amount REAL,
+        error_code TEXT,
+        reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
 
     // Migration-safe: add column first on upgraded stores, then create index.
@@ -312,6 +428,20 @@ export class AdapterStateStore {
       this.db.exec(`ALTER TABLE replay_nonces ADD COLUMN payment_fingerprint TEXT;`);
     } catch {
       // already exists on upgraded stores
+    }
+    for (const column of [
+      ["route", "TEXT"],
+      ["risk_level", "TEXT"],
+      ["facilitator_provider", "TEXT"],
+      ["network", "TEXT"],
+      ["pay_to", "TEXT"],
+      ["price", "TEXT"]
+    ]) {
+      try {
+        this.db.exec(`ALTER TABLE war_room_events ADD COLUMN ${column[0]} ${column[1]};`);
+      } catch {
+        // already exists on upgraded stores
+      }
     }
     try {
       this.db.exec(`
@@ -352,6 +482,166 @@ export class AdapterStateStore {
       return `session_payer:${sessionId}:${payer}`;
     }
     return null;
+  }
+
+  getIdempotencyRecord(key) {
+    const row = this.stmt.getPaidIdempotency.get(key);
+    if (!row) {
+      return null;
+    }
+    return {
+      ...row,
+      response: fromJson(row.response_json, null)
+    };
+  }
+
+  reserveIdempotencyKey({
+    key,
+    requestHash,
+    payer,
+    subjectId,
+    nonce,
+    mode
+  }) {
+    const now = nowIso();
+    try {
+      this.stmt.insertPaidIdempotency.run(
+        key,
+        requestHash,
+        payer ?? null,
+        subjectId ?? null,
+        nonce ?? null,
+        mode ?? null,
+        now,
+        now
+      );
+      return {
+        ok: true,
+        created: true,
+        record: this.getIdempotencyRecord(key)
+      };
+    } catch (error) {
+      if (!String(error?.message ?? "").includes("UNIQUE")) {
+        throw error;
+      }
+      const existing = this.getIdempotencyRecord(key);
+      if (!existing) {
+        return {
+          ok: false,
+          reason: "IDEMPOTENCY_CONFLICT",
+          details: { key, message: "idempotency_lookup_failed_after_conflict" }
+        };
+      }
+      if (existing.request_hash !== requestHash) {
+        return {
+          ok: false,
+          reason: "IDEMPOTENCY_CONFLICT",
+          details: {
+            key,
+            existing_request_hash: existing.request_hash,
+            request_hash: requestHash
+          }
+        };
+      }
+      return {
+        ok: true,
+        created: false,
+        record: existing
+      };
+    }
+  }
+
+  finalizeIdempotencyKey({
+    key,
+    statusCode,
+    response,
+    errorCode,
+    receiptId
+  }) {
+    this.stmt.updatePaidIdempotency.run(
+      statusCode ?? null,
+      toJson(response ?? null),
+      errorCode ?? null,
+      receiptId ?? null,
+      nowIso(),
+      key
+    );
+    return this.getIdempotencyRecord(key);
+  }
+
+  getCachedTrustForSubject(subjectId) {
+    if (!subjectId) {
+      return null;
+    }
+    const row = this.stmt.getTrustCache.get(subjectId);
+    if (!row) {
+      return null;
+    }
+    return {
+      subject_id: row.subject_id,
+      response: fromJson(row.response_json, null),
+      updated_at: row.updated_at
+    };
+  }
+
+  setCachedTrustForSubject(subjectId, response) {
+    if (!subjectId || !response || typeof response !== "object") {
+      return;
+    }
+    this.stmt.upsertTrustCache.run(subjectId, toJson(response), nowIso());
+  }
+
+  recordWarRoomEvent(event = {}) {
+    const normalized = {
+      event_id: event.event_id ?? `wre_${randomUUID()}`,
+      event_type: event.event_type ?? "paid_call.unknown",
+      timestamp: event.timestamp ?? nowIso(),
+      payer: event.payer ?? null,
+      subject_id: event.subject_id ?? null,
+      trust_score: Number.isFinite(Number(event.trust_score)) ? Number(event.trust_score) : null,
+      trust_tier: event.trust_tier ?? null,
+      mode: event.mode ?? null,
+      confidence: Number.isFinite(Number(event.confidence)) ? Number(event.confidence) : null,
+      status: event.status ?? null,
+      route: event.route ?? null,
+      risk_level: event.risk_level ?? null,
+      receipt_id: event.receipt_id ?? null,
+      facilitator_provider: event.facilitator_provider ?? null,
+      network: event.network ?? null,
+      payTo: event.payTo ?? event.pay_to ?? null,
+      price: event.price ?? null,
+      amount: Number.isFinite(Number(event.amount)) ? Number(event.amount) : null,
+      error_code: event.error_code ?? null,
+      reason: event.reason ?? null
+    };
+    this.stmt.insertWarRoomEvent.run(
+      normalized.event_id,
+      normalized.event_type,
+      normalized.timestamp,
+      normalized.payer,
+      normalized.subject_id,
+      normalized.trust_score,
+      normalized.trust_tier,
+      normalized.mode,
+      normalized.confidence,
+      normalized.status,
+      normalized.route,
+      normalized.risk_level,
+      normalized.receipt_id,
+      normalized.facilitator_provider,
+      normalized.network,
+      normalized.payTo,
+      normalized.price,
+      normalized.amount,
+      normalized.error_code,
+      normalized.reason
+    );
+    return normalized;
+  }
+
+  listWarRoomEvents(limit = 50) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    return this.stmt.listWarRoomEvents.all(safeLimit);
   }
 
   assertNotReplay({ nonce, proofId, sessionId, payer, toolName, replayWindowSeconds, verifierReference }) {
@@ -728,6 +1018,36 @@ export class AdapterStateStore {
       receiptId ?? null,
       internalTraceId ?? null,
       toJson(details),
+      nowIso()
+    );
+  }
+
+  recordBillingLedgerEntry({
+    adapterTraceId,
+    requestId = null,
+    toolName,
+    payer,
+    subjectId,
+    billedUnits,
+    receiptId,
+    network,
+    asset,
+    priceAtomic,
+    status = "paid"
+  }) {
+    this.stmt.insertBillingLedger.run(
+      `bill_${randomUUID()}`,
+      adapterTraceId ?? null,
+      requestId ?? null,
+      toolName,
+      payer ?? null,
+      subjectId ?? null,
+      billedUnits ?? 0,
+      receiptId ?? null,
+      network ?? null,
+      asset ?? null,
+      priceAtomic != null ? String(priceAtomic) : null,
+      status,
       nowIso()
     );
   }

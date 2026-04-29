@@ -23,7 +23,20 @@ export const EVIDENCE_EVENT_TYPES = [
   "route.selected",
   "route.blocked",
   "collusion.suspected",
-  "passport.revoked"
+  "passport.revoked",
+  "CLEAN_EXECUTION",
+  "PAYMENT_VERIFIED",
+  "PAYMENT_FAILED",
+  "REPLAY_ATTEMPT",
+  "DUPLICATE_PAYMENT_SIGNATURE",
+  "MALFORMED_PAYLOAD",
+  "PAYLOAD_MISMATCH",
+  "VERIFIER_DELAY",
+  "RATE_SPIKE",
+  "OUTPUT_INCONSISTENCY",
+  "DEPENDENCY_FAILURE",
+  "MANUAL_OVERRIDE",
+  "QUARANTINE"
 ];
 
 export const TRUST_BANDS = [

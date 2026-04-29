@@ -1,19 +1,133 @@
 import http from "node:http";
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { buildAiPluginManifest } from "../config/ai-plugin.mjs";
-import { buildBazaarDiscoveryDocument } from "../config/bazaar-discovery.mjs";
-import { buildMarketplaceManifest } from "../config/marketplace-manifest.mjs";
+import { randomUUID } from "node:crypto";
+import { declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const ADAPTER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OPENAPI_FILE = path.join(ADAPTER_ROOT, "..", "openapi.yaml");
+const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
+const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
+const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
+  subject_id: "agent_public_paid_proof",
+  context: {
+    action: "execute_task",
+    domain: "agentic_market",
+    capital_at_risk_usd: 1000
+  }
+};
+const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
+  subject_id: "agent_public_paid_proof",
+  trust_score: 40,
+  risk_level: "medium",
+  route: "allow",
+  status: "allow"
+};
+const RESOLVE_TRUST_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    subject_id: { type: "string" },
+    trust_score: { type: "number" },
+    risk_level: { type: "string" },
+    route: { type: "string" },
+    status: { type: "string" }
+  },
+  required: ["subject_id", "trust_score", "route"]
+};
+const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
+  const declared = declareDiscoveryExtension({
+    input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        subject_id: { type: "string" },
+        context: { type: "object" }
+      },
+      required: ["subject_id"],
+      additionalProperties: false
+    },
+    bodyType: "json",
+    output: {
+      example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
+      schema: RESOLVE_TRUST_RESPONSE_SCHEMA
+    }
+  }).bazaar;
+
+  return {
+    ...declared,
+    routeTemplate: "/v1/resolve-trust",
+    info: {
+      ...declared.info,
+      input: {
+        ...declared.info.input,
+        method: "POST"
+      },
+      tags: RESOLVE_TRUST_BAZAAR_TAGS,
+      category: "infrastructure"
+    },
+    schema: {
+      ...declared.schema,
+      properties: {
+        ...declared.schema.properties,
+        input: {
+          ...declared.schema.properties.input,
+          properties: {
+            ...declared.schema.properties.input.properties,
+            method: {
+              type: "string",
+              enum: ["POST"]
+            }
+          },
+          required: Array.from(new Set([...(declared.schema.properties.input.required ?? []), "method"]))
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" }
+        },
+        category: { type: "string" }
+      }
+    }
+  };
+})();
+const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
+const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
+const PUBLIC_PROOF_RECEIPTS = {
+  [LATEST_PUBLIC_PROOF_RECEIPT_ID]: {
+    project: "Infopunks Trust Layer",
+    event_type: "paid_call.success",
+    timestamp: "2026-04-29T05:46:20.244Z",
+    receipt_id: LATEST_PUBLIC_PROOF_RECEIPT_ID,
+    tool: "resolve_trust",
+    facilitator_provider: "cdp",
+    network: "eip155:8453",
+    chain: "Base mainnet",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    final_status: 200,
+    payment_header_used: "PAYMENT-SIGNATURE",
+    public_proof: true,
+    tx_hash: null,
+    block_explorer_url: null,
+    verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
+  },
+  [PREVIOUS_PUBLIC_PROOF_RECEIPT_ID]: {
+    project: "Infopunks Trust Layer",
+    event_type: "paid_call.success",
+    timestamp: "2026-04-28T20:50:13.597Z",
+    receipt_id: PREVIOUS_PUBLIC_PROOF_RECEIPT_ID,
+    tool: "resolve_trust",
+    facilitator_provider: "cdp",
+    network: "eip155:8453",
+    chain: "Base mainnet",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    final_status: 200,
+    payment_header_used: "PAYMENT-SIGNATURE",
+    public_proof: true,
+    tx_hash: null,
+    block_explorer_url: null,
+    verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
+  }
+};
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
@@ -36,57 +150,17 @@ function sendText(res, statusCode, text, extraHeaders = {}) {
   res.end(text);
 }
 
-function safeEqual(left, right) {
-  const leftBuffer = Buffer.from(String(left ?? ""));
-  const rightBuffer = Buffer.from(String(right ?? ""));
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function contentTypeIsJson(req) {
   const value = String(req.headers?.["content-type"] ?? "");
   return value.toLowerCase().includes("application/json");
 }
 
-function requireAdminToken(req, config) {
-  if (!config.adminEndpointsRequireToken) {
+function hasRequestBody(req) {
+  const contentLength = req.headers?.["content-length"];
+  if (contentLength != null && Number(contentLength) > 0) {
     return true;
   }
-  if (!config.adminToken) {
-    return String(config.environment ?? "local") === "local";
-  }
-  const auth = req.headers.authorization;
-  if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    return safeEqual(auth.slice(7).trim(), config.adminToken);
-  }
-  return safeEqual(req.headers["x-admin-token"], config.adminToken);
-}
-
-function verifyWebhookHmac({ req, rawBody, config }) {
-  if (!config.settlementWebhookHmacSecret) {
-    return true;
-  }
-
-  const timestampHeader = req.headers["x-webhook-timestamp"];
-  const signatureHeader = req.headers["x-webhook-signature"];
-  if (typeof timestampHeader !== "string" || typeof signatureHeader !== "string") {
-    return false;
-  }
-
-  const timestampSeconds = Number(timestampHeader);
-  if (!Number.isFinite(timestampSeconds)) {
-    return false;
-  }
-  const skew = Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds);
-  if (skew > config.settlementWebhookMaxSkewSeconds) {
-    return false;
-  }
-
-  const payload = `${timestampHeader}.${rawBody}`;
-  const expected = createHmac("sha256", config.settlementWebhookHmacSecret).update(payload).digest("hex");
-  return safeEqual(signatureHeader, expected);
+  return Boolean(req.headers?.["transfer-encoding"]);
 }
 
 async function readJsonBody(req) {
@@ -144,7 +218,7 @@ function normalizeNetworkToCaip2(network) {
     return "eip155:84532";
   }
   if (normalized === "base") {
-    return "eip155:84532";
+    return "eip155:8453";
   }
   return normalized;
 }
@@ -158,6 +232,128 @@ function resourceUrl(config, resourcePath) {
   return `${origin.replace(/\/$/, "")}${resourcePath}`;
 }
 
+function routeOutputSchema(resourcePath, toolDef) {
+  if (resourcePath === "/v1/resolve-trust") {
+    return RESOLVE_TRUST_RESPONSE_SCHEMA;
+  }
+  return toolDef?.outputSchema ?? undefined;
+}
+
+function routeDescription(resourcePath, toolDef) {
+  return resourcePath === "/v1/resolve-trust"
+    ? RESOLVE_TRUST_BAZAAR_DESCRIPTION
+    : (toolDef?.description ?? "Paid Infopunks endpoint");
+}
+
+function routeExtensions(resourcePath) {
+  if (resourcePath === "/v1/resolve-trust") {
+    return { bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION };
+  }
+  return {};
+}
+
+function routeResourceMetadata(config, toolDef, resourcePath) {
+  const url = resourceUrl(config, resourcePath);
+  return {
+    resource: url,
+    url,
+    description: routeDescription(resourcePath, toolDef),
+    mimeType: "application/json",
+    inputSchema: toolDef?.inputSchema ?? undefined,
+    outputSchema: routeOutputSchema(resourcePath, toolDef),
+    extensions: routeExtensions(resourcePath)
+  };
+}
+
+function validateJsonSchema(value, schema, path = "$") {
+  const errors = [];
+  if (!schema || typeof schema !== "object") {
+    return errors;
+  }
+
+  if (Object.hasOwn(schema, "const") && value !== schema.const) {
+    errors.push(`${path} should equal ${JSON.stringify(schema.const)}`);
+    return errors;
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errors.push(`${path} should be one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
+    return errors;
+  }
+
+  if (schema.type === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${path} should be object`);
+      return errors;
+    }
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    for (const key of required) {
+      if (!Object.hasOwn(value, key)) {
+        errors.push(`${path}.${key} is required`);
+      }
+    }
+    const properties = schema.properties ?? {};
+    for (const [key, childSchema] of Object.entries(properties)) {
+      if (Object.hasOwn(value, key)) {
+        errors.push(...validateJsonSchema(value[key], childSchema, `${path}.${key}`));
+      }
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(properties, key)) {
+          errors.push(`${path}.${key} is not allowed`);
+        }
+      }
+    }
+    return errors;
+  }
+
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) {
+      errors.push(`${path} should be array`);
+      return errors;
+    }
+    if (schema.items) {
+      value.forEach((item, index) => {
+        errors.push(...validateJsonSchema(item, schema.items, `${path}[${index}]`));
+      });
+    }
+    return errors;
+  }
+
+  if (schema.type === "string") {
+    if (typeof value !== "string") {
+      errors.push(`${path} should be string`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "number") {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      errors.push(`${path} should be number`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "integer") {
+    if (!Number.isInteger(value)) {
+      errors.push(`${path} should be integer`);
+    }
+    return errors;
+  }
+
+  if (schema.type === "boolean") {
+    if (typeof value !== "boolean") {
+      errors.push(`${path} should be boolean`);
+    }
+  }
+
+  return errors;
+}
+
+function validateBazaarExtension(extension) {
+  return validateDiscoveryExtension(extension);
+}
+
 function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   const units = Number(toolDef?.pricing?.units ?? 0);
   const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
@@ -169,25 +365,39 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
     fallbackName: config.x402Eip712Name,
     fallbackVersion: config.x402Eip712Version
   });
+  const facilitatorProvider = String(config.x402FacilitatorProvider ?? "openfacilitator").trim().toLowerCase();
+  const preferredSymbol = String((config.x402AcceptedAssets ?? [])[0] ?? "").trim().toUpperCase();
+  const configuredEip712Name = String(config.x402Eip712Name ?? "").trim();
+  const configuredEip712Version = String(config.x402Eip712Version ?? "").trim();
   const extra = {};
-  if (tokenMetadata.name) {
-    extra.name = tokenMetadata.name;
-  }
-  if (tokenMetadata.version) {
-    extra.version = tokenMetadata.version;
-  }
-  if (tokenMetadata.symbol) {
-    extra.symbol = tokenMetadata.symbol;
+  if (facilitatorProvider === "cdp") {
+    if (configuredEip712Name) {
+      extra.name = configuredEip712Name;
+    }
+    if (configuredEip712Version) {
+      extra.version = configuredEip712Version;
+    }
+    if (preferredSymbol) {
+      extra.symbol = preferredSymbol;
+    } else if (tokenMetadata.symbol) {
+      extra.symbol = tokenMetadata.symbol;
+    }
+  } else {
+    if (tokenMetadata.name) {
+      extra.name = tokenMetadata.name;
+    }
+    if (tokenMetadata.version) {
+      extra.version = tokenMetadata.version;
+    }
+    if (tokenMetadata.symbol) {
+      extra.symbol = tokenMetadata.symbol;
+    }
   }
 
   return {
     x402Version: 2,
     error: "Payment required",
-    resource: {
-      url: resourceUrl(config, resourcePath),
-      description: toolDef?.description ?? "Paid Infopunks endpoint",
-      mimeType: "application/json"
-    },
+    resource: routeResourceMetadata(config, toolDef, resourcePath),
     accepts: [
       {
         scheme: config.x402PaymentScheme ?? "exact",
@@ -202,10 +412,10 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   };
 }
 
-function challengeHeaders(config, toolDef, resourcePath = "/trust-score") {
+function challengeHeaders(config, toolDef, resourcePath = "/v1/resolve-trust") {
   const units = toolDef?.pricing?.units ?? 0;
   const rail = "x402";
-  const discovery = `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`;
+  const discovery = `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/infopunks-trust-layer.json`;
   const paymentRequired = paymentRequiredEnvelope(config, toolDef, resourcePath);
   return {
     "x402-required": "true",
@@ -230,6 +440,14 @@ function decodePaymentHeader(paymentHeader) {
   }
 }
 
+function displayPrice(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.startsWith("$") ? normalized : `$${normalized}`;
+}
+
 function extractPayerFromPayload(paymentPayload) {
   const from = paymentPayload?.payload?.authorization?.from;
   if (typeof from === "string" && from.trim()) {
@@ -246,8 +464,10 @@ function extractNonceFromPayload(paymentPayload) {
   return null;
 }
 
-function paymentFromHeaders(headers) {
-  const paymentHeader = headers?.["payment-signature"] ?? headers?.["x-payment"];
+function paymentFromHeaders(headers, facilitatorProvider = "openfacilitator") {
+  const paymentSignatureHeader = headers?.["payment-signature"];
+  const legacyPaymentHeader = facilitatorProvider === "cdp" ? null : headers?.["x-payment"];
+  const paymentHeader = paymentSignatureHeader ?? legacyPaymentHeader;
   const decodedPayload = decodePaymentHeader(paymentHeader);
   if (!decodedPayload) {
     return null;
@@ -264,34 +484,76 @@ function paymentFromHeaders(headers) {
   };
 }
 
-function mergeHeaderPayment(body, headers) {
-  const headerPayment = paymentFromHeaders(headers);
+function hasBodyPayment(payment) {
+  if (!payment || typeof payment !== "object") {
+    return false;
+  }
+  return Boolean(
+    payment.paymentPayload
+    || payment.paymentRequirements
+    || payment.rail
+    || payment.payer
+    || payment.nonce
+    || payment.proof
+    || payment.proof_id
+    || payment.reference
+    || payment.units_authorized
+  );
+}
+
+function mergeHeaderPayment(body, headers, facilitatorProvider = "openfacilitator") {
+  const headerPayment = paymentFromHeaders(headers, facilitatorProvider);
+  const idempotencyKey = headers?.["idempotency-key"] ?? headers?.["x-idempotency-key"] ?? null;
+  const requestTimestamp = headers?.["x-request-timestamp"] ?? null;
+  const nonce = headers?.["x-payment-nonce"] ?? null;
   if (!headerPayment) {
-    return body;
+    if (!body || typeof body !== "object") {
+      return body;
+    }
+    if (!body.payment || typeof body.payment !== "object") {
+      return body;
+    }
+    return {
+      ...body,
+      payment: {
+        ...body.payment,
+        ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+        ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+        ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
+      }
+    };
   }
   if (body?.payment && typeof body.payment === "object") {
     return {
       ...body,
       payment: {
         ...headerPayment,
-        ...body.payment
+        ...body.payment,
+        ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+        ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+        ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
       }
     };
   }
   return {
     ...body,
-    payment: headerPayment
+    payment: {
+      ...headerPayment,
+      ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
+      ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
+      ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
+    }
   };
 }
 
-function attachHeaderPaymentToRpcRequest(request, headers) {
+function attachHeaderPaymentToRpcRequest(request, headers, facilitatorProvider = "openfacilitator") {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     return request;
   }
   if (request.method !== "tools/call") {
     return request;
   }
-  const withPayment = mergeHeaderPayment(request.params?.arguments ?? {}, headers);
+  const withPayment = mergeHeaderPayment(request.params?.arguments ?? {}, headers, facilitatorProvider);
   return {
     ...request,
     params: {
@@ -368,6 +630,13 @@ function buildSignals(result = {}) {
     value: result.band ?? "unknown",
     weight: 0.45
   });
+  if (result.trust_state || result.trustState) {
+    signals.push({
+      name: "trust_state",
+      value: result.trust_state ?? result.trustState,
+      weight: 0.5
+    });
+  }
   return signals.slice(0, 8);
 }
 
@@ -392,27 +661,457 @@ function normalizeTrustScoreRequest(body = {}) {
 
 function toTrustScoreResponse(request, toolOutput) {
   const result = toolOutput?.result ?? {};
-  const score = toNumeric(result.score, 0);
+  const vector = (result.trust_vector ?? result.trustVector) ?? {};
+  const score = toNumeric(result.score, toNumeric(result.trust_score, toNumeric(vector.overallTrust, 0)));
   const confidence = toNumeric(result.confidence, 0);
   const route = toPolicyRoute(result.decision);
   const reasonCodes = Array.isArray(result.reason_codes) ? result.reason_codes : [];
-  const reason = reasonCodes.length > 0 ? reasonCodes.join(",") : String(result.decision ?? "policy_default");
+  const reason = reasonCodes.length > 0
+    ? reasonCodes.join(",")
+    : String(result.reason ?? result.decision ?? "policy_default");
+  const policy = result.trust_policy ?? result.policy ?? null;
+  const evidence = result.trust_evidence ?? result.evidence ?? null;
+  const agenticMarket = result.agentic_market ?? result.agenticMarket ?? null;
+  const mode = typeof result.mode === "string" && result.mode.trim()
+    ? result.mode.trim()
+    : (route === "allow" ? "verified" : "degraded");
 
   return {
     entity_id: String(request.entity_id),
     trust_score: Math.max(0, Math.min(100, Math.round(score))),
+    score: Math.max(0, Math.min(100, Math.round(score))),
     risk_level: toRiskLevel({ score, band: result.band }),
     confidence: Math.max(0, Math.min(1, Number(confidence.toFixed(4)))),
+    mode,
+    trust_state: result.trust_state ?? result.trustState ?? "UNKNOWN",
+    trust_vector: {
+      executionReliability: Math.max(0, Math.min(100, Math.round(toNumeric(vector.executionReliability, score)))),
+      economicIntegrity: Math.max(0, Math.min(100, Math.round(toNumeric(vector.economicIntegrity, score)))),
+      identityCredibility: Math.max(0, Math.min(100, Math.round(toNumeric(vector.identityCredibility, score)))),
+      behavioralStability: Math.max(0, Math.min(100, Math.round(toNumeric(vector.behavioralStability, score)))),
+      dependencyRisk: Math.max(0, Math.min(100, Math.round(toNumeric(vector.dependencyRisk, 0)))),
+      adversarialRisk: Math.max(0, Math.min(100, Math.round(toNumeric(vector.adversarialRisk, 0)))),
+      evidenceFreshness: Math.max(0, Math.min(100, Math.round(toNumeric(vector.evidenceFreshness, 0)))),
+      overallTrust: Math.max(0, Math.min(100, Math.round(toNumeric(vector.overallTrust, score))))
+    },
     last_updated: result.expires_at ?? new Date().toISOString(),
     signals: buildSignals(result),
     policy: {
       route,
       reason
+    },
+    policy_engine: policy,
+    evidence,
+    agentic_market: agenticMarket
+  };
+}
+
+function reasonsFromResult(result = {}) {
+  if (Array.isArray(result.reason_codes) && result.reason_codes.length > 0) {
+    return result.reason_codes.map(String);
+  }
+  if (typeof result.reason === "string" && result.reason.trim()) {
+    return [result.reason.trim()];
+  }
+  if (typeof result.decision === "string" && result.decision.trim()) {
+    return [result.decision.trim()];
+  }
+  return ["policy_default"];
+}
+
+function toResolveTrustV1Response(request, toolOutput, config) {
+  const result = toolOutput?.result ?? {};
+  const trustResponse = toTrustScoreResponse(request, toolOutput);
+  const receipt = toolOutput?.meta?.x402_receipt ?? null;
+  const network = receipt?.network
+    ?? toolOutput?.meta?.x402_receipt?.paymentRequirements?.network
+    ?? (config.x402SupportedNetworks ?? [])[0]
+    ?? null;
+  const asset = receipt?.asset
+    ?? toolOutput?.meta?.x402_receipt?.paymentRequirements?.asset
+    ?? config.x402PaymentAssetAddress
+    ?? (config.x402AcceptedAssets ?? [])[0]
+    ?? null;
+
+  return {
+    subject_id: String(result.subject_id ?? request.entity_id),
+    trust_score: trustResponse.trust_score,
+    risk_level: trustResponse.risk_level,
+    confidence: trustResponse.confidence,
+    route: trustResponse.policy.route,
+    status: trustResponse.policy.route,
+    reasons: reasonsFromResult(result),
+    receipt: {
+      x402_verified: Boolean(toolOutput?.meta?.payment_receipt_id),
+      facilitator_provider: receipt?.facilitator_provider ?? config.x402FacilitatorProvider ?? "openfacilitator",
+      network,
+      asset,
+      payTo: receipt?.payTo ?? config.x402PayTo ?? null,
+      price: receipt?.price ?? config.x402Price ?? config.x402PriceUsd ?? config.x402PricePerUnitAtomic ?? null,
+      payment_receipt_id: toolOutput?.meta?.payment_receipt_id ?? null,
+      verifier_reference: receipt?.verifier_reference ?? toolOutput?.meta?.verifier_reference ?? null,
+      settlement_status: receipt?.settlement_status ?? null
     }
   };
 }
 
+function buildInfopunksTrustLayerManifest(config) {
+  const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+  const resolveTrustTool = findTool("resolve_trust");
+  return {
+    name: "Infopunks Trust Layer",
+    slug: "infopunks-trust-layer",
+    version: config.adapterVersion,
+    description: "x402-gated trust resolution for agent routing and Agentic.Market discovery.",
+    endpoints: {
+      health: `${origin}/health`,
+      openapi: `${origin}/openapi.json`,
+      resolve_trust: `${origin}/v1/resolve-trust`,
+      events_recent: `${origin}/v1/events/recent`
+    },
+    resources: {
+      resolve_trust: {
+        method: "POST",
+        ...routeResourceMetadata(config, resolveTrustTool, "/v1/resolve-trust")
+      }
+    },
+    payment: {
+      rail: "x402",
+      network: (config.x402SupportedNetworks ?? [])[0] ?? null,
+      asset: (config.x402AcceptedAssets ?? [])[0] ?? null,
+      price_usd: config.x402PriceUsd ?? null,
+      price: displayPrice(config.x402Price ?? config.x402PriceUsd ?? null),
+      price_atomic: config.x402PricePerUnitAtomic,
+      pay_to_configured: Boolean(config.x402PayTo),
+      facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator"
+    },
+    discoverability: {
+      agentic_market_listing: `${origin}/.well-known/infopunks-trust-layer.json`
+    }
+  };
+}
+
+function buildOpenApiJson(origin, config) {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Infopunks Trust Layer API",
+      version: config.adapterVersion,
+      description: "Public x402-gated trust resolution surface for Agentic.Market."
+    },
+    servers: [{ url: origin }],
+    paths: {
+      "/health": {
+        get: {
+          summary: "Liveness check",
+          responses: {
+            200: {
+              description: "Service is reachable",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/.well-known/infopunks-trust-layer.json": {
+        get: {
+          summary: "Infopunks Trust Layer discovery metadata",
+          responses: {
+            200: {
+              description: "Discovery metadata",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/openapi.json": {
+        get: {
+          summary: "OpenAPI document",
+          responses: {
+            200: {
+              description: "OpenAPI JSON",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/proof": {
+        get: {
+          summary: "Human-readable paid-call proof page",
+          responses: {
+            200: {
+              description: "Proof page",
+              content: { "text/plain": { schema: { type: "string" } } }
+            }
+          }
+        }
+      },
+      "/receipts/{receipt_id}": {
+        get: {
+          summary: "Public paid-call proof receipt",
+          parameters: [
+            {
+              name: "receipt_id",
+              in: "path",
+              required: true,
+              schema: { type: "string" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Receipt proof",
+              content: { "application/json": { schema: { type: "object" } } }
+            },
+            404: {
+              description: "Receipt not found"
+            }
+          }
+        }
+      },
+      "/v1/resolve-trust": {
+        post: {
+          summary: "Resolve trust with x402 payment gating",
+          description: RESOLVE_TRUST_BAZAAR_DESCRIPTION,
+          extensions: {
+            bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
+          },
+          "x-bazaar": RESOLVE_TRUST_BAZAAR_EXTENSION,
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ResolveTrustRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Trust response",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ResolveTrustResponse" }
+                }
+              }
+            },
+            402: {
+              description: "Payment required",
+              headers: {
+                "PAYMENT-REQUIRED": { schema: { type: "string" } },
+                "x402-required": { schema: { type: "string", const: "true" } },
+                "x402-payment-rail": { schema: { type: "string", const: "x402" } },
+                "x402-accepted-assets": { schema: { type: "string" } },
+                "x402-supported-networks": { schema: { type: "string" } }
+              }
+            }
+          }
+        }
+      },
+      "/v1/events/recent": {
+        get: {
+          summary: "Recent sanitized payment/trust events",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              schema: { type: "integer", minimum: 1, maximum: 50, default: 25 }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Recent events",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      count: { type: "integer" },
+                      events: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            event_id: { type: "string" },
+                            event_type: { type: "string" },
+                            timestamp: { type: "string" },
+                            subject_id: { type: "string" },
+                            trust_score: { type: "number" },
+                            route: { type: "string" },
+                            confidence: { type: "number" },
+                status: { type: "string" },
+                facilitator_provider: { type: "string" },
+                network: { type: "string" },
+                payTo: { type: "string" },
+                price: { type: "string" },
+                risk_level: { type: "string" },
+                receipt_id: { type: "string" },
+                reason: { type: "string" }
+                          }
+                        }
+                      }
+                    },
+                    required: ["count", "events"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    components: {
+      schemas: {
+        ResolveTrustRequest: {
+          type: "object",
+          properties: {
+            subject_id: { type: "string" },
+            context: { type: "object", additionalProperties: true },
+            payment: { type: "object", additionalProperties: true }
+          },
+          required: ["subject_id"]
+        },
+        ResolveTrustResponse: {
+          type: "object",
+          properties: {
+            ...RESOLVE_TRUST_RESPONSE_SCHEMA.properties,
+            confidence: { type: "number" },
+            reasons: { type: "array", items: { type: "string" } },
+            receipt: {
+              type: "object",
+              properties: {
+                x402_verified: { type: "boolean" },
+                facilitator_provider: { type: "string" },
+                network: { type: "string" },
+                asset: { type: "string" },
+                payTo: { type: "string" },
+                price: { type: "string" }
+              },
+              required: ["x402_verified", "network", "asset"]
+            }
+          },
+          required: ["subject_id", "trust_score", "route", "reasons", "receipt"]
+        }
+      }
+    }
+  };
+}
+
+function sanitizePublicEvent(event = {}) {
+  const status = event.status ?? null;
+  const route = ["allow", "degrade", "block", "quarantine"].includes(String(event.route ?? status ?? "").toLowerCase())
+    ? String(event.route ?? status).toLowerCase()
+    : null;
+  return {
+    event_id: event.event_id ?? null,
+    event_type: event.event_type ?? null,
+    timestamp: event.timestamp ?? null,
+    subject_id: event.subject_id ?? null,
+    trust_score: toNumeric(event.trust_score, null),
+    route,
+    confidence: toNumeric(event.confidence, null),
+    status,
+    receipt_id: event.receipt_id ?? null,
+    facilitator_provider: event.facilitator_provider ?? null,
+    network: event.network ?? null,
+    payTo: event.payTo ?? event.pay_to ?? null,
+    price: event.price ?? null,
+    risk_level: event.risk_level ?? null,
+    reason: event.reason ?? null
+  };
+}
+
+function normalizeTxHash(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function blockExplorerUrl(network, txHash) {
+  if (!txHash) {
+    return null;
+  }
+  if (network === "eip155:8453") {
+    return `https://basescan.org/tx/${txHash}`;
+  }
+  return null;
+}
+
+async function findReceiptContext(mcpServer, receiptId) {
+  const receipt = typeof mcpServer?.store?.getReceiptById === "function"
+    ? await mcpServer.store.getReceiptById(receiptId)
+    : null;
+  const recent = await mcpServer?.warRoomFeed?.listLatest?.(200) ?? [];
+  const event = Array.isArray(recent)
+    ? recent.find((entry) => String(entry?.receipt_id ?? "").trim() === receiptId)
+    : null;
+  return { receipt, event };
+}
+
+async function publicReceiptResponse(mcpServer, receiptId) {
+  const base = PUBLIC_PROOF_RECEIPTS[receiptId];
+  if (!base) {
+    return null;
+  }
+  const { receipt, event } = await findReceiptContext(mcpServer, receiptId);
+  const txHash = normalizeTxHash(
+    receipt?.tx_hash
+    ?? receipt?.txHash
+    ?? event?.tx_hash
+    ?? event?.txHash
+    ?? base.tx_hash
+  );
+  const explorerUrl = blockExplorerUrl(base.network, txHash);
+  return {
+    ...base,
+    event_type: event?.event_type ?? base.event_type,
+    event: event?.event_type ?? base.event_type,
+    status: event?.event_type ?? event?.status ?? base.event_type,
+    timestamp: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
+    created_at: event?.timestamp ?? receipt?.provisional_at ?? receipt?.created_at ?? base.timestamp ?? null,
+    settled_at: receipt?.settled_at ?? null,
+    tx_hash: txHash,
+    block_explorer_url: explorerUrl,
+    public_verification_level: txHash
+      ? "application_receipt_with_onchain_anchor"
+      : "application_receipt_pending_tx_hash"
+  };
+}
+
+function renderProofPage({ latestProof, previousReceiptId }) {
+  const lines = [
+    "INFOPUNKS TRUST LAYER",
+    "PAID CALL VERIFIED",
+    "",
+    `latest_receipt_id: ${latestProof.receipt_id}`,
+    `previous_receipt_id: ${previousReceiptId}`,
+    "",
+    `receipt_id: ${latestProof.receipt_id}`,
+    `status: ${latestProof.status}`,
+    `facilitator: ${String(latestProof.facilitator_provider ?? "").toUpperCase()}`,
+    `network: ${latestProof.chain}`,
+    `chain_id: ${latestProof.network}`,
+    `tool: ${latestProof.tool}`,
+    "settlement: verified"
+  ];
+  if (latestProof.tx_hash) {
+    lines.push(`tx_hash: ${latestProof.tx_hash}`);
+  }
+  if (latestProof.block_explorer_url) {
+    lines.push(`explorer: ${latestProof.block_explorer_url}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function statusFromAdapterErrorCode(code, fallback = 500) {
+  if (code === "REPLAY_DETECTED") {
+    return 409;
+  }
+  if (code === "IDEMPOTENCY_CONFLICT") {
+    return 409;
+  }
+  if (code === "REQUEST_TIMESTAMP_INVALID") {
+    return 400;
+  }
   if (PAYMENT_ERROR_CODES.has(code)) {
     return code === "PAYMENT_REPLAY_DETECTED" ? 409 : 402;
   }
@@ -438,65 +1137,8 @@ function statusFromAdapterErrorCode(code, fallback = 500) {
 }
 
 export function createHttpTransport({ config, mcpServer, logger, metrics }) {
-  async function executeRestTool({ toolName, args, req, res }) {
-    const toolDef = findTool(toolName);
-    if (!toolDef) {
-      sendJson(res, 404, { error: { code: "INVALID_INPUT", message: `Unknown tool ${toolName}.` } }, corsHeaders());
-      return;
-    }
-
-    const adapterTraceId = createAdapterTraceId();
-    try {
-      const output = await mcpServer.executeTool(
-        toolDef,
-        args,
-        adapterTraceId,
-        { headers: req.headers, ip: req.socket?.remoteAddress ?? null }
-      );
-      sendJson(res, 200, output, {
-        ...corsHeaders(),
-        "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-      });
-    } catch (error) {
-      const errorEnvelope = toMcpToolError(error, adapterTraceId, toolDef.operation).structuredContent;
-      const code = errorEnvelope?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-      const statusCode = statusFromAdapterErrorCode(code, error?.status ?? 500);
-      const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef) : {};
-      sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders });
-    }
-  }
-
-  async function marketplaceReadiness() {
-    const verifier = await mcpServer.entitlementService?.verifier?.readiness?.();
-    const discoveryDoc = buildBazaarDiscoveryDocument(config);
-    const toolCount = Array.isArray(discoveryDoc?.tools) ? discoveryDoc.tools.length : 0;
-    const readiness = {
-      public_url_configured: Boolean(config.publicUrl),
-      facilitator_mode_enabled: config.x402VerifierMode === "facilitator",
-      verifier_connected: Boolean(verifier?.connected),
-      settlement_webhook_configured: Boolean(config.settlementWebhookHmacSecret || config.settlementWebhookSecret),
-      admin_security_configured: Boolean(!config.adminEndpointsRequireToken || config.adminToken),
-      entitlement_policy_ready: Boolean(
-        config.entitlementTokenRequired
-        && config.entitlementIssuer
-        && config.entitlementAudience
-      ),
-      discovery_metadata_valid: toolCount > 0
-    };
-    return {
-      signals: readiness,
-      details: {
-        verifier_mode: config.x402VerifierMode,
-        verifier_reason: verifier?.reason ?? "unknown",
-        public_url: config.publicUrl ?? null,
-        discovery_tool_count: toolCount
-      },
-      ready_for_listing: Object.values(readiness).every(Boolean)
-    };
-  }
-
+  void metrics;
   const server = http.createServer(async (req, res) => {
-    const started = Date.now();
     const method = String(req.method ?? "GET").toUpperCase();
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
@@ -506,61 +1148,144 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       return;
     }
 
-    // Lightweight Render health check: no DB/upstream dependency.
+    if (method === "GET" && url.pathname === "/") {
+      const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+      const marketplaceListing = `${origin}/.well-known/${"agentic-marketplace"}.json`;
+      const body = [
+        "Infopunks Trust Layer alive",
+        `${origin}/health`,
+        `${origin}/proof`,
+        `${origin}/openapi.json`,
+        marketplaceListing
+      ].join("\n");
+      sendText(res, 200, `${body}\n`, corsHeaders());
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, { status: "ok" }, corsHeaders());
       return;
     }
 
-    if (method === "GET" && url.pathname === "/healthz") {
-      const healthy = await mcpServer.apiClient.health();
-      const listing = await marketplaceReadiness();
-      sendJson(
+    if (method === "GET" && url.pathname === "/proof") {
+      const latestProof = await publicReceiptResponse(mcpServer, LATEST_PUBLIC_PROOF_RECEIPT_ID);
+      if (!latestProof) {
+        sendText(res, 404, "Proof not found\n", corsHeaders());
+        return;
+      }
+      sendText(
         res,
-        healthy ? (listing.ready_for_listing ? 200 : 206) : 503,
-        {
-          ok: healthy,
-          service: config.adapterName,
-          version: config.adapterVersion,
-          transport: "http",
-          marketplace_readiness: listing
-        },
+        200,
+        renderProofPage({
+          latestProof,
+          previousReceiptId: PREVIOUS_PUBLIC_PROOF_RECEIPT_ID
+        }),
         corsHeaders()
       );
       return;
     }
 
-    if (method === "GET" && url.pathname === "/") {
+    if (method === "GET" && url.pathname.startsWith("/receipts/")) {
+      const receiptId = decodeURIComponent(url.pathname.slice("/receipts/".length)).trim();
+      const proof = await publicReceiptResponse(mcpServer, receiptId);
+      if (!proof) {
+        sendJson(
+          res,
+          404,
+          { error: { code: "RECEIPT_NOT_FOUND", message: "Receipt not found." } },
+          corsHeaders()
+        );
+        return;
+      }
+      sendJson(res, 200, proof, corsHeaders());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/v1/events/recent") {
+      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 25));
+      const events = await mcpServer.warRoomFeed?.listLatest?.(limit) ?? [];
+      const sanitized = Array.isArray(events) ? events.slice(0, limit).map((entry) => sanitizePublicEvent(entry)) : [];
       sendJson(
         res,
         200,
-        {
-          ok: true,
-          service: config.adapterName,
-          version: config.adapterVersion,
-          mcp_endpoint: "/mcp",
-          public_url: config.publicUrl ?? null,
-          discovery_metadata: "/.well-known/x402-bazaar.json",
-          zero_api_keys_externally: true
-        },
+        { count: sanitized.length, events: sanitized },
         corsHeaders()
       );
       return;
     }
 
-    if (method === "POST" && url.pathname === "/trust-score") {
+    if (method === "POST" && url.pathname === "/v1/resolve-trust") {
+      const endpointPath = url.pathname;
+      const requestId = typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
+        ? req.headers["x-request-id"].trim()
+        : `req_${randomUUID()}`;
+      const toolDef = findTool("resolve_trust");
+      const headerPayment = paymentFromHeaders(req.headers, config.x402FacilitatorProvider);
+      if (!headerPayment && !hasRequestBody(req)) {
+        sendJson(
+          res,
+          402,
+          {
+            error: {
+              code: "ENTITLEMENT_REQUIRED",
+              message: "x402 payment is required for this endpoint."
+            }
+          },
+          {
+            ...corsHeaders(),
+            ...challengeHeaders(config, toolDef, endpointPath),
+            "x-request-id": requestId
+          }
+        );
+        logger.info({
+          event: "402_challenge_issued",
+          request_id: requestId,
+          adapter_trace_id: null,
+          endpoint: endpointPath,
+          entity_id: null,
+          code: "ENTITLEMENT_REQUIRED"
+        });
+        return;
+      }
       if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
+        sendJson(res, 415, { error: "content_type_must_be_application_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
       let bodyAndRaw;
       try {
         bodyAndRaw = await readJsonBody(req);
       } catch (error) {
-        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, corsHeaders());
+        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
-      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers);
+      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers, config.x402FacilitatorProvider);
+      const suppliedPayment = headerPayment || hasBodyPayment(body?.payment);
+      if (!suppliedPayment) {
+        sendJson(
+          res,
+          402,
+          {
+            error: {
+              code: "ENTITLEMENT_REQUIRED",
+              message: "x402 payment is required for this endpoint."
+            }
+          },
+          {
+            ...corsHeaders(),
+            ...challengeHeaders(config, toolDef, endpointPath),
+            "x-request-id": requestId
+          }
+        );
+        logger.info({
+          event: "402_challenge_issued",
+          request_id: requestId,
+          adapter_trace_id: null,
+          endpoint: endpointPath,
+          entity_id: null,
+          code: "ENTITLEMENT_REQUIRED"
+        });
+        return;
+      }
       const normalized = normalizeTrustScoreRequest(body);
       if (!normalized.entity_id) {
         sendJson(
@@ -572,11 +1297,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
               message: "entity_id (or subject_id/agent_id) is required."
             }
           },
-          corsHeaders()
+          { ...corsHeaders(), "x-request-id": requestId }
         );
         return;
       }
-      const toolDef = findTool("resolve_trust");
       const adapterTraceId = createAdapterTraceId();
       const args = {
         subject_id: normalized.entity_id,
@@ -591,8 +1315,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       };
 
       logger.info({
-        event: "trust_score_request_received",
+        event: "incoming_request",
+        request_id: requestId,
         adapter_trace_id: adapterTraceId,
+        endpoint: endpointPath,
         entity_id: normalized.entity_id,
         ip: req.socket?.remoteAddress ?? "unknown"
       });
@@ -602,316 +1328,110 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           toolDef,
           args,
           adapterTraceId,
-          { headers: req.headers, ip: req.socket?.remoteAddress ?? null }
+          { headers: { ...req.headers, "x-request-id": requestId }, ip: req.socket?.remoteAddress ?? null }
         );
         logger.info({
-          event: "trust_score_payment_validated",
+          event: "payment_verified",
+          request_id: requestId,
           adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
           entity_id: normalized.entity_id,
           billed_units: output?.meta?.billed_units ?? 0,
-          payment_receipt_id: output?.meta?.payment_receipt_id ?? null
+          payment_receipt_id: output?.meta?.payment_receipt_id ?? null,
+          facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator",
+          network: output?.meta?.x402_receipt?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
+          payTo: output?.meta?.x402_receipt?.payTo ?? config.x402PayTo ?? null,
+          price: output?.meta?.x402_receipt?.price ?? config.x402Price ?? config.x402PricePerUnitAtomic ?? null
         });
+        if (output?.meta?.payment_receipt_id) {
+          logger.info({
+            event: "receipt_logged",
+            request_id: requestId,
+            adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
+            entity_id: normalized.entity_id,
+            payment_receipt_id: output.meta.payment_receipt_id
+          });
+        }
 
-        const trustResponse = toTrustScoreResponse(normalized, output);
-        sendJson(res, 200, trustResponse, {
-          ...corsHeaders(),
-          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
+        const trustResponse = toResolveTrustV1Response(normalized, output, config);
+        await mcpServer.warRoomFeed?.record?.({
+          event_type: "paid_call.success",
+          timestamp: new Date().toISOString(),
+          subject_id: trustResponse.subject_id,
+          trust_score: trustResponse.trust_score,
+          confidence: trustResponse.confidence,
+          status: trustResponse.route,
+          route: trustResponse.route,
+          risk_level: trustResponse.risk_level,
+          receipt_id: trustResponse.receipt?.payment_receipt_id,
+          facilitator_provider: trustResponse.receipt?.facilitator_provider ?? config.x402FacilitatorProvider ?? "openfacilitator",
+          network: trustResponse.receipt?.network ?? null,
+          payTo: trustResponse.receipt?.payTo ?? config.x402PayTo ?? null,
+          price: trustResponse.receipt?.price ?? config.x402Price ?? config.x402PricePerUnitAtomic ?? null,
+          reason: Array.isArray(trustResponse.reasons) && trustResponse.reasons.length > 0 ? trustResponse.reasons[0] : null
         });
         logger.info({
-          event: "trust_score_response_sent",
+          event: "trust_subject_resolved",
+          request_id: requestId,
           adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
+          subject_id: trustResponse.subject_id ?? trustResponse.entity_id,
+          trust_score: trustResponse.trust_score
+        });
+        sendJson(res, 200, trustResponse, {
+          ...corsHeaders(),
+          "x-request-id": requestId,
+          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/infopunks-trust-layer.json`
+        });
+        logger.info({
+          event: "final_route_returned",
+          request_id: requestId,
+          adapter_trace_id: adapterTraceId,
+          endpoint: endpointPath,
           entity_id: normalized.entity_id,
           trust_score: trustResponse.trust_score,
-          policy_route: trustResponse.policy.route
+          route: trustResponse.route ?? trustResponse.policy?.route
         });
       } catch (error) {
         const errorEnvelope = toMcpToolError(error, adapterTraceId, toolDef.operation).structuredContent;
         const code = errorEnvelope?.error?.code ?? "UPSTREAM_UNAVAILABLE";
         const statusCode = statusFromAdapterErrorCode(code, error?.status ?? 500);
-        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, "/trust-score") : {};
+        const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, endpointPath) : {};
 
         if (PAYMENT_ERROR_CODES.has(code)) {
           logger.info({
-            event: "trust_score_payment_required",
+            event: statusCode === 402 ? "402_challenge_issued" : "payment_failed",
+            request_id: requestId,
             adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
             entity_id: normalized.entity_id,
             code
           });
         } else {
           logger.error({
             event: "trust_score_error",
+            request_id: requestId,
             adapter_trace_id: adapterTraceId,
+            endpoint: endpointPath,
             entity_id: normalized.entity_id,
             code,
             message: errorEnvelope?.error?.message ?? "trust_score_route_failed"
           });
         }
-        sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders });
+        sendJson(res, statusCode, errorEnvelope, { ...corsHeaders(), ...extraHeaders, "x-request-id": requestId });
       }
       return;
     }
 
-    if (method === "GET" && url.pathname.startsWith("/agent-reputation/")) {
-      const subjectId = decodeURIComponent(url.pathname.slice("/agent-reputation/".length));
-      if (!subjectId) {
-        sendJson(
-          res,
-          400,
-          { error: { code: "INVALID_INPUT", message: "Agent reputation path requires an id." } },
-          corsHeaders()
-        );
-        return;
-      }
-
-      const adapterTraceId = createAdapterTraceId();
-      try {
-        const passport = await mcpServer.apiClient.getPassport(subjectId, adapterTraceId);
-        const explanation = await mcpServer.apiClient
-          .getTrustExplanation(subjectId, url.searchParams.get("context_hash"), adapterTraceId)
-          .catch(() => null);
-        sendJson(
-          res,
-          200,
-          {
-            result: {
-              subject_id: subjectId,
-              passport,
-              trust_explanation: explanation
-            },
-            meta: {
-              endpoint: "agent_reputation",
-              adapter_trace_id: adapterTraceId
-            }
-          },
-          corsHeaders()
-        );
-      } catch (error) {
-        const mapped = toMcpToolError(error, adapterTraceId, "get_passport").structuredContent;
-        const code = mapped?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-        sendJson(res, statusFromAdapterErrorCode(code, error?.status ?? 500), mapped, corsHeaders());
-      }
+    if (method === "GET" && url.pathname === "/.well-known/infopunks-trust-layer.json") {
+      sendJson(res, 200, buildInfopunksTrustLayerManifest(config), corsHeaders());
       return;
     }
 
-    if (method === "POST" && url.pathname === "/verify-evidence") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, corsHeaders());
-        return;
-      }
-      const body = bodyAndRaw.parsed ?? {};
-      const adapterTraceId = createAdapterTraceId();
-      try {
-        const accepted = await mcpServer.apiClient.recordEvidence(body, adapterTraceId);
-        sendJson(
-          res,
-          202,
-          {
-            result: accepted,
-            meta: {
-              endpoint: "verify_evidence",
-              adapter_trace_id: adapterTraceId
-            }
-          },
-          corsHeaders()
-        );
-      } catch (error) {
-        const mapped = toMcpToolError(error, adapterTraceId, "verify_evidence").structuredContent;
-        const code = mapped?.error?.code ?? "UPSTREAM_UNAVAILABLE";
-        sendJson(res, statusFromAdapterErrorCode(code, error?.status ?? 500), mapped, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "GET" && (url.pathname === "/.well-known/x402-bazaar.json" || url.pathname === "/bazaar/discovery")) {
-      sendJson(res, 200, buildBazaarDiscoveryDocument(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/marketplace/readiness") {
-      sendJson(res, 200, await marketplaceReadiness(), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/.well-known/ai-plugin.json") {
-      sendJson(res, 200, buildAiPluginManifest(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && (url.pathname === "/.well-known/agentic-marketplace.json" || url.pathname === "/marketplace/manifest")) {
-      sendJson(res, 200, buildMarketplaceManifest(config), corsHeaders());
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/openapi.yaml") {
-      try {
-        const spec = readFileSync(OPENAPI_FILE, "utf8");
-        sendText(res, 200, spec, { ...corsHeaders(), "content-type": "application/yaml; charset=utf-8" });
-      } catch {
-        sendJson(res, 404, { ok: false, error: "openapi_not_found" }, corsHeaders());
-      }
-      return;
-    }
-
-    if (method === "GET" && url.pathname === "/metrics") {
-      if (!config.metricsPublic && !requireAdminToken(req, config)) {
-        sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-        return;
-      }
-      sendJson(res, 200, { counters: metrics.snapshot() }, corsHeaders());
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/mcp") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(
-          res,
-          400,
-          {
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: error?.message ?? "Parse error" }
-          },
-          corsHeaders()
-        );
-        return;
-      }
-      const body = bodyAndRaw.parsed;
-
-      if (Array.isArray(body)) {
-        if (body.length > config.maxBatchRequests) {
-          sendJson(
-            res,
-            400,
-            {
-              jsonrpc: "2.0",
-              id: null,
-              error: {
-                code: -32600,
-                message: `Batch request exceeds max size (${config.maxBatchRequests}).`
-              }
-            },
-            corsHeaders()
-          );
-          return;
-        }
-        const responses = [];
-        for (const request of body) {
-          try {
-            const normalizedRequest = attachHeaderPaymentToRpcRequest(request, req.headers);
-            const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
-            if (response) {
-              responses.push(response);
-            }
-          } catch (error) {
-            responses.push({
-              jsonrpc: "2.0",
-              id: request?.id ?? null,
-              error: { code: -32000, message: error?.message ?? "Unhandled server error" }
-            });
-          }
-        }
-        const firstPaymentError = responses.find((item) => PAYMENT_ERROR_CODES.has(item?.result?.structuredContent?.error?.code));
-        const firstPaidRequest = body.find((request) => request?.method === "tools/call");
-        const toolDef = findTool(firstPaidRequest?.params?.name);
-        sendJson(res, firstPaymentError ? 402 : 200, responses, {
-          ...corsHeaders(),
-          ...(firstPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
-          "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-        });
-      } else {
-        try {
-          const normalizedRequest = attachHeaderPaymentToRpcRequest(body, req.headers);
-          const response = await mcpServer.handleRequest(normalizedRequest, { headers: req.headers, ip: req.socket?.remoteAddress ?? null });
-          if (!response) {
-            res.writeHead(204, corsHeaders());
-            res.end();
-            return;
-          }
-          const code = response?.result?.structuredContent?.error?.code;
-          const isPaymentError = PAYMENT_ERROR_CODES.has(code);
-          const toolDef = findTool(normalizedRequest?.params?.name);
-          sendJson(res, isPaymentError ? 402 : 200, response, {
-            ...corsHeaders(),
-            ...(isPaymentError ? challengeHeaders(config, toolDef, "/mcp") : {}),
-            "x402-discovery": `${config.publicUrl ?? `http://${config.host}:${config.port}`}/.well-known/x402-bazaar.json`
-          });
-        } catch (error) {
-          sendJson(
-            res,
-            500,
-            {
-              jsonrpc: "2.0",
-              id: body?.id ?? null,
-              error: { code: -32000, message: error?.message ?? "Unhandled server error" }
-            },
-            corsHeaders()
-          );
-        }
-      }
-      logger.info({
-        event: "http_request",
-        method,
-        path: url.pathname,
-        status_code: res.statusCode,
-        duration_ms: Date.now() - started
-      });
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/x402/settlement/webhook") {
-      if (!contentTypeIsJson(req)) {
-        sendJson(res, 415, { ok: false, error: "content_type_must_be_application_json" }, corsHeaders());
-        return;
-      }
-
-      let bodyAndRaw;
-      try {
-        bodyAndRaw = await readJsonBody(req);
-      } catch (error) {
-        sendJson(res, 400, { ok: false, error: error?.message ?? "invalid_json" }, corsHeaders());
-        return;
-      }
-      const body = bodyAndRaw.parsed;
-
-      if (!verifyWebhookHmac({ req, rawBody: bodyAndRaw.raw, config })) {
-        sendJson(res, 401, { ok: false, error: "invalid_signature" }, corsHeaders());
-        return;
-      }
-      if (!config.settlementWebhookHmacSecret && config.settlementWebhookSecret) {
-        const token = req.headers["x-webhook-secret"];
-        if (!safeEqual(token, config.settlementWebhookSecret)) {
-          sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-          return;
-        }
-      }
-
-      const settled = await mcpServer.reconciliationService.applySettlementEvent(body ?? {});
-      sendJson(res, settled.ok ? 200 : 404, settled, corsHeaders());
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/x402/reconcile") {
-      if (!requireAdminToken(req, config)) {
-        sendJson(res, 401, { ok: false, error: "unauthorized" }, corsHeaders());
-        return;
-      }
-      const output = await mcpServer.reconciliationService.reconcileOnce({ adapterTraceId: null });
-      sendJson(res, 200, output, corsHeaders());
+    if (method === "GET" && url.pathname === "/openapi.json") {
+      const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
+      sendJson(res, 200, buildOpenApiJson(origin, config), corsHeaders());
       return;
     }
 
@@ -926,7 +1446,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             event: "http_server_started",
             host: config.host,
             port: config.port,
-            mcp_endpoint: `${config.publicUrl ?? `http://${config.host}:${config.port}`}/mcp`
+            resolve_trust_endpoint: `${config.publicUrl ?? `http://${config.host}:${config.port}`}/v1/resolve-trust`
           });
           resolve();
         });
@@ -947,14 +1467,14 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 }
 
 export const __testOnly = {
-  safeEqual,
   contentTypeIsJson,
-  requireAdminToken,
-  verifyWebhookHmac,
   statusFromAdapterErrorCode,
+  validateBazaarExtension,
+  validateJsonSchema,
   challengeHeaders,
   normalizeTrustScoreRequest,
   toTrustScoreResponse,
+  toResolveTrustV1Response,
   toPolicyRoute,
   toRiskLevel
 };

@@ -34,7 +34,8 @@ export function buildMarketplaceManifest(config) {
       url: `${url}/mcp`,
       bazaar_metadata_url: `${url}/.well-known/x402-bazaar.json`,
       readiness_url: `${url}/marketplace/readiness`,
-      openapi_url: `${url}/openapi.yaml`
+      openapi_url: `${url}/openapi.json`,
+      trust_layer_metadata_url: `${url}/.well-known/infopunks-trust-layer.json`
     },
     authentication: {
       external_api_keys: false,
@@ -51,9 +52,16 @@ export function buildMarketplaceManifest(config) {
     http_api: {
       endpoints: [
         {
+          path: "/v1/resolve-trust",
+          method: "POST",
+          paid: true,
+          price_units: TOOL_PRICING.resolve_trust?.units ?? 1
+        },
+        {
           path: "/trust-score",
           method: "POST",
           paid: true,
+          legacy_alias: true,
           price_units: TOOL_PRICING.resolve_trust?.units ?? 1
         },
         {

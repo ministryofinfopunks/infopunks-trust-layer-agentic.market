@@ -9,6 +9,53 @@ const BAND_ORDER = [
   "privileged"
 ];
 
+export const TRUST_STATES = [
+  "UNKNOWN",
+  "VERIFIED",
+  "DEGRADING",
+  "RISKY",
+  "COMPROMISED",
+  "QUARANTINED"
+];
+
+export const TRUST_POLICY_ACTIONS = [
+  "ALLOW",
+  "RATE_LIMIT",
+  "REQUIRE_ESCROW",
+  "REQUIRE_SECONDARY_VALIDATION",
+  "MANUAL_REVIEW",
+  "BLOCK",
+  "QUARANTINE"
+];
+
+const DEFAULT_TRUST_CONFIG = {
+  decayHalfLifeHours: 72,
+  minVerifiedScore: 80,
+  riskyThreshold: 50,
+  quarantineThreshold: 25,
+  maxRecoveryPerEvent: 3,
+  replayPenalty: 35,
+  duplicatePaymentPenalty: 35,
+  malformedPayloadPenalty: 20,
+  verifierDelayPenalty: 10
+};
+
+const ADAPTIVE_EVENT_PENALTIES = {
+  CLEAN_EXECUTION: { positive: 2 },
+  PAYMENT_VERIFIED: { positive: 2 },
+  PAYMENT_FAILED: { negative: 18 },
+  REPLAY_ATTEMPT: { negativeKey: "replayPenalty" },
+  DUPLICATE_PAYMENT_SIGNATURE: { negativeKey: "duplicatePaymentPenalty" },
+  MALFORMED_PAYLOAD: { negativeKey: "malformedPayloadPenalty" },
+  PAYLOAD_MISMATCH: { negative: 22 },
+  VERIFIER_DELAY: { negativeKey: "verifierDelayPenalty" },
+  RATE_SPIKE: { negative: 14 },
+  OUTPUT_INCONSISTENCY: { negative: 16 },
+  DEPENDENCY_FAILURE: { negative: 18 },
+  MANUAL_OVERRIDE: { positive: 1 },
+  QUARANTINE: { negative: 50 }
+};
+
 function clamp(min, value, max) {
   return Math.max(min, Math.min(value, max));
 }
@@ -36,8 +83,31 @@ function ageHours(createdAt, nowIso) {
   return Math.max(0, delta / (1000 * 60 * 60));
 }
 
-function expFreshness(hours) {
-  return round(Math.exp(-hours / 48));
+export function normalizeTrustConfig(overrides = {}) {
+  const fromEnv = (name, fallback) => {
+    const raw = process.env[name];
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      return fallback;
+    }
+    return value;
+  };
+  return {
+    decayHalfLifeHours: Number(overrides.decayHalfLifeHours ?? fromEnv("TRUST_DECAY_HALF_LIFE_HOURS", DEFAULT_TRUST_CONFIG.decayHalfLifeHours)),
+    minVerifiedScore: Number(overrides.minVerifiedScore ?? fromEnv("TRUST_MIN_VERIFIED_SCORE", DEFAULT_TRUST_CONFIG.minVerifiedScore)),
+    riskyThreshold: Number(overrides.riskyThreshold ?? fromEnv("TRUST_RISKY_THRESHOLD", DEFAULT_TRUST_CONFIG.riskyThreshold)),
+    quarantineThreshold: Number(overrides.quarantineThreshold ?? fromEnv("TRUST_QUARANTINE_THRESHOLD", DEFAULT_TRUST_CONFIG.quarantineThreshold)),
+    maxRecoveryPerEvent: Number(overrides.maxRecoveryPerEvent ?? fromEnv("TRUST_MAX_RECOVERY_PER_EVENT", DEFAULT_TRUST_CONFIG.maxRecoveryPerEvent)),
+    replayPenalty: Number(overrides.replayPenalty ?? fromEnv("TRUST_REPLAY_PENALTY", DEFAULT_TRUST_CONFIG.replayPenalty)),
+    duplicatePaymentPenalty: Number(overrides.duplicatePaymentPenalty ?? fromEnv("TRUST_DUPLICATE_PAYMENT_PENALTY", DEFAULT_TRUST_CONFIG.duplicatePaymentPenalty)),
+    malformedPayloadPenalty: Number(overrides.malformedPayloadPenalty ?? fromEnv("TRUST_MALFORMED_PAYLOAD_PENALTY", DEFAULT_TRUST_CONFIG.malformedPayloadPenalty)),
+    verifierDelayPenalty: Number(overrides.verifierDelayPenalty ?? fromEnv("TRUST_VERIFIER_DELAY_PENALTY", DEFAULT_TRUST_CONFIG.verifierDelayPenalty))
+  };
+}
+
+function expFreshness(hours, halfLifeHours = 72) {
+  const safeHalfLife = Math.max(1, Number(halfLifeHours) || 72);
+  return round(Math.pow(0.5, hours / safeHalfLife));
 }
 
 function rollingWeights(items) {
@@ -80,6 +150,84 @@ function buildDomainStats(evidences, nowIso) {
     stats.set(domain, bucket);
   }
   return stats;
+}
+
+function normalizeEventType(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[.\-]/g, "_")
+    .toUpperCase();
+}
+
+function dependencySignals(passport = {}, recentWindow = []) {
+  const dependencies = Array.isArray(passport?.metadata?.dependencies) ? passport.metadata.dependencies : [];
+  const fromPassport = dependencies.map((entry) => {
+    const state = String(entry?.state ?? "UNKNOWN").toUpperCase();
+    const health = Number(entry?.health ?? entry?.score ?? 60);
+    return { state, health };
+  });
+  const fromEvidence = recentWindow.flatMap((entry) => {
+    const raw = entry?.context?.dependency_health;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return [];
+    }
+    return Object.values(raw).map((value) => {
+      if (typeof value === "number") {
+        return { state: value < 40 ? "RISKY" : "VERIFIED", health: value };
+      }
+      if (value && typeof value === "object") {
+        return { state: String(value.state ?? "UNKNOWN").toUpperCase(), health: Number(value.health ?? value.score ?? 60) };
+      }
+      return { state: "UNKNOWN", health: 60 };
+    });
+  });
+  const all = [...fromPassport, ...fromEvidence];
+  if (all.length === 0) {
+    return { dependencyRisk: 0.2, dependencyCount: 0, riskyDependencies: 0 };
+  }
+  const riskyDependencies = all.filter((entry) => ["RISKY", "COMPROMISED", "QUARANTINED"].includes(entry.state)).length;
+  const avgHealth = all.reduce((sum, entry) => sum + clamp(0, Number(entry.health ?? 60), 100), 0) / all.length;
+  const statePenalty = riskyDependencies / all.length;
+  const risk = clamp(0, 0.55 * (1 - avgHealth / 100) + 0.45 * statePenalty, 1);
+  return {
+    dependencyRisk: round(risk),
+    dependencyCount: all.length,
+    riskyDependencies
+  };
+}
+
+function adversarialSignals(recentWindow = [], trustConfig = DEFAULT_TRUST_CONFIG) {
+  const eventCounts = new Map();
+  for (const entry of recentWindow) {
+    const normalized = normalizeEventType(entry?.event_type);
+    eventCounts.set(normalized, (eventCounts.get(normalized) ?? 0) + 1);
+    if (normalized === "TASK_COMPLETED") {
+      eventCounts.set("CLEAN_EXECUTION", (eventCounts.get("CLEAN_EXECUTION") ?? 0) + 1);
+    }
+  }
+
+  let negative = 0;
+  let positive = 0;
+  for (const [eventType, count] of eventCounts.entries()) {
+    const rule = ADAPTIVE_EVENT_PENALTIES[eventType];
+    if (!rule) {
+      continue;
+    }
+    const units = Math.max(1, count);
+    if (rule.positive) {
+      positive += Math.min(rule.positive, trustConfig.maxRecoveryPerEvent) * units;
+    }
+    const negativeValue = rule.negativeKey ? Number(trustConfig[rule.negativeKey] ?? 0) : Number(rule.negative ?? 0);
+    negative += Math.max(0, negativeValue) * units;
+  }
+  const net = positive - negative;
+  return {
+    eventCounts: Object.fromEntries(eventCounts.entries()),
+    negativeScore: round(negative, 2),
+    positiveScore: round(positive, 2),
+    netScore: round(net, 2),
+    riskSignal: round(clamp(0, negative / 120, 1))
+  };
 }
 
 function computeTaskValueWeight(evidence) {
@@ -190,7 +338,8 @@ export function stableHash(value) {
   return `ctx_${crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 10)}`;
 }
 
-export function computeSnapshot({ subjectId, passport, evidences, nowIso, previousSnapshot, policy }) {
+export function computeSnapshot({ subjectId, passport, evidences, nowIso, previousSnapshot, policy, trustConfig: trustConfigOverrides = {} }) {
+  const trustConfig = normalizeTrustConfig(trustConfigOverrides);
   const ordered = [...evidences].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime() || a.evidence_id.localeCompare(b.evidence_id)
   );
@@ -303,14 +452,14 @@ export function computeSnapshot({ subjectId, passport, evidences, nowIso, previo
       stats.validatedQuality.length === 0
         ? 0.3
         : stats.validatedQuality.reduce((sum, value) => sum + value, 0) / stats.validatedQuality.length;
-    const domainFreshness = expFreshness(stats.freshestHours);
+    const domainFreshness = expFreshness(stats.freshestHours, trustConfig.decayHalfLifeHours);
     domainCompetence[domain] = round(
       clamp(0, 0.5 * domainSuccess + 0.3 * domainQuality + 0.2 * domainFreshness, 1)
     );
   }
 
   const lastEventAt = ordered[0]?.created_at ?? passport.created_at;
-  const freshness = ordered.length === 0 ? 0.2 : expFreshness(ageHours(lastEventAt, nowIso));
+  const freshness = ordered.length === 0 ? 0.2 : expFreshness(ageHours(lastEventAt, nowIso), trustConfig.decayHalfLifeHours);
   const previousExecution = Number(previousSnapshot?.vector?.execution_reliability ?? executionReliability);
   const volatility = Math.abs(previousExecution - executionReliability);
   const coordinationStability = clamp(0, 1 - volatility, 1);
@@ -340,6 +489,50 @@ export function computeSnapshot({ subjectId, passport, evidences, nowIso, previo
     1
   );
 
+  const dependency = dependencySignals(passport, recentWindow);
+  const adversarial = adversarialSignals(mediumWindow, trustConfig);
+  const behavioralStability = clamp(
+    0,
+    0.45 * coordinationStability +
+      0.25 * (1 - anomalyWindowRisk) +
+      0.2 * (1 - reversalAsymmetry) +
+      0.1 * (1 - adversarial.riskSignal),
+    1
+  );
+  const identityCredibility = clamp(
+    0,
+    0.65 * identityIntegrity +
+      0.2 * (1 - sockpuppetRisk) +
+      0.15 * (1 - issuerCorrelation),
+    1
+  );
+  const economicIntegrity = clamp(
+    0,
+    0.4 * executionReliability +
+      0.25 * validationQuality +
+      0.2 * (1 - disputeRate) +
+      0.15 * (1 - adversarial.riskSignal),
+    1
+  );
+  const adversarialRisk = clamp(
+    0,
+    0.4 * graphSignals.collusion_risk +
+      0.25 * sockpuppetRisk +
+      0.2 * validatorBriberyRisk +
+      0.15 * clamp(0, anomalyWindowRisk + adversarial.riskSignal * 0.7, 1),
+    1
+  );
+  const trustVector = {
+    executionReliability: Math.round(executionReliability * 100),
+    economicIntegrity: Math.round(economicIntegrity * 100),
+    identityCredibility: Math.round(identityCredibility * 100),
+    behavioralStability: Math.round(behavioralStability * 100),
+    dependencyRisk: Math.round(dependency.dependencyRisk * 100),
+    adversarialRisk: Math.round(adversarialRisk * 100),
+    evidenceFreshness: Math.round(freshness * 100),
+    overallTrust: 0
+  };
+
   return {
     subject_id: subjectId,
     snapshot_version: Number(previousSnapshot?.snapshot_version ?? 0) + 1,
@@ -364,7 +557,12 @@ export function computeSnapshot({ subjectId, passport, evidences, nowIso, previo
       sockpuppet_risk: round(sockpuppetRisk),
       validator_bribery_risk: round(validatorBriberyRisk),
       anomaly_window_risk: round(anomalyWindowRisk),
-      task_value_weight: round(recentTaskValue)
+      task_value_weight: round(recentTaskValue),
+      trust_vector_v1: trustVector,
+      adversarial_penalty: adversarial.netScore,
+      adversarial_event_counts: adversarial.eventCounts,
+      dependency_count: dependency.dependencyCount,
+      dependency_risky_count: dependency.riskyDependencies
     },
     aggregate_counts: {
       tasks_total: taskEvents.length,
@@ -375,11 +573,121 @@ export function computeSnapshot({ subjectId, passport, evidences, nowIso, previo
       disputes_total: disputeEvents.length
     },
     last_event_at: lastEventAt,
+    last_evidence_at: lastEventAt,
     updated_at: nowIso
   };
 }
 
-export function computeResolution({ passport, snapshot, context, policy, nowIso }) {
+function mapActionToLegacyDecision(action, fallback = "allow_with_validation") {
+  if (action === "ALLOW") {
+    return "allow";
+  }
+  if (action === "BLOCK" || action === "QUARANTINE" || action === "MANUAL_REVIEW") {
+    return "deny";
+  }
+  if (action === "RATE_LIMIT" || action === "REQUIRE_ESCROW" || action === "REQUIRE_SECONDARY_VALIDATION") {
+    return "restrict";
+  }
+  return fallback;
+}
+
+function deriveTrustState(trustVector, score, trustConfig, rawVector = {}) {
+  const adversarialEvents = rawVector.adversarial_event_counts ?? {};
+  const quarantineSignals = Number(adversarialEvents.QUARANTINE ?? 0);
+  if (quarantineSignals > 0 || trustVector.adversarialRisk >= 90 || score <= trustConfig.quarantineThreshold) {
+    return "QUARANTINED";
+  }
+  if (trustVector.adversarialRisk >= 80 || score <= 35) {
+    return "COMPROMISED";
+  }
+  if (score < trustConfig.riskyThreshold || trustVector.adversarialRisk >= 70) {
+    return "RISKY";
+  }
+  if (trustVector.evidenceFreshness < 40 || trustVector.executionReliability < 50) {
+    return "DEGRADING";
+  }
+  if (score >= trustConfig.minVerifiedScore && trustVector.adversarialRisk < 40) {
+    return "VERIFIED";
+  }
+  return "UNKNOWN";
+}
+
+function derivePolicy(trustVector, trustState, reasonCodes = []) {
+  let action = "ALLOW";
+  if (trustState === "QUARANTINED") {
+    action = "QUARANTINE";
+  } else if (trustState === "COMPROMISED") {
+    action = "BLOCK";
+  } else if (trustState === "RISKY") {
+    action = "REQUIRE_SECONDARY_VALIDATION";
+  } else if (trustState === "DEGRADING") {
+    action = "RATE_LIMIT";
+  }
+  if (trustVector.adversarialRisk > 70 && !["QUARANTINE", "BLOCK"].includes(action)) {
+    action = "REQUIRE_SECONDARY_VALIDATION";
+  }
+  if (trustVector.economicIntegrity < 60 && action === "ALLOW") {
+    action = "REQUIRE_ESCROW";
+  }
+  if (trustVector.executionReliability < 50 && action === "ALLOW") {
+    action = "RATE_LIMIT";
+  }
+
+  const allow = !["BLOCK", "QUARANTINE"].includes(action);
+  const policyReasonCodes = [...reasonCodes];
+  if (trustVector.adversarialRisk > 70) {
+    policyReasonCodes.push("adversarial_risk_elevated");
+  }
+  if (trustVector.economicIntegrity < 60) {
+    policyReasonCodes.push("economic_integrity_low");
+  }
+  if (trustVector.executionReliability < 50) {
+    policyReasonCodes.push("execution_reliability_low");
+  }
+  if (trustVector.evidenceFreshness < 40) {
+    policyReasonCodes.push("evidence_freshness_low");
+  }
+  if (trustState === "QUARANTINED") {
+    policyReasonCodes.push("state_quarantined");
+  }
+
+  const uniqueCodes = [...new Set(policyReasonCodes)];
+  const routingPriority = Math.round(
+    clamp(
+      0,
+      100 -
+        trustVector.adversarialRisk * 0.45 -
+        trustVector.dependencyRisk * 0.25 +
+        trustVector.executionReliability * 0.2,
+      100
+    )
+  );
+  const maxRequestsPerMinute = action === "QUARANTINE"
+    ? 0
+    : action === "BLOCK"
+      ? 1
+      : action === "MANUAL_REVIEW"
+        ? 4
+        : action === "RATE_LIMIT"
+          ? 20
+          : action === "REQUIRE_SECONDARY_VALIDATION" || action === "REQUIRE_ESCROW"
+            ? 40
+            : 120;
+
+  return {
+    allow,
+    action,
+    routingPriority,
+    maxRequestsPerMinute,
+    escrowRequired: action === "REQUIRE_ESCROW" || trustVector.economicIntegrity < 60,
+    secondaryValidationRequired: action === "REQUIRE_SECONDARY_VALIDATION" || trustVector.adversarialRisk > 70,
+    reasonCodes: uniqueCodes,
+    humanReadableSummary: `State ${trustState}: ${action.replaceAll("_", " ").toLowerCase()} due to ${uniqueCodes.join(", ") || "baseline policy"}.`
+  };
+}
+
+export function computeResolution({ passport, snapshot, context, policy, nowIso, trustConfig: trustConfigOverrides = {} }) {
+  const trustConfig = normalizeTrustConfig(trustConfigOverrides);
   const base = 20;
   const domain = context?.domain;
   const vector = snapshot.vector;
@@ -403,7 +711,9 @@ export function computeResolution({ passport, snapshot, context, policy, nowIso 
       1
     );
   const decayPenalty = 10 * (1 - Number(vector.freshness ?? 0));
-  const rawScore = base + identity + execution + validation + domainScore + freshness + stability - disputePenalty - collusionPenalty - decayPenalty;
+  const dependencyPenalty = 0.12 * Number(vector.trust_vector_v1?.dependencyRisk ?? 20);
+  const adversarialPenalty = 0.15 * Number(vector.trust_vector_v1?.adversarialRisk ?? 20);
+  const rawScore = base + identity + execution + validation + domainScore + freshness + stability - disputePenalty - collusionPenalty - decayPenalty - dependencyPenalty - adversarialPenalty;
   const score = Math.round(clamp(0, rawScore, 100));
   const band = scoreBand(score, policy);
   const riskLevel = context?.risk_level ?? "medium";
@@ -499,6 +809,18 @@ export function computeResolution({ passport, snapshot, context, policy, nowIso 
     reasonCodes.push("baseline_policy_applied");
   }
 
+  const trustVector = {
+    executionReliability: Math.round(Number(vector.trust_vector_v1?.executionReliability ?? Number(vector.execution_reliability ?? 0) * 100)),
+    economicIntegrity: Math.round(Number(vector.trust_vector_v1?.economicIntegrity ?? 55)),
+    identityCredibility: Math.round(Number(vector.trust_vector_v1?.identityCredibility ?? Number(vector.identity_integrity ?? 0) * 100)),
+    behavioralStability: Math.round(Number(vector.trust_vector_v1?.behavioralStability ?? Number(vector.coordination_stability ?? 0) * 100)),
+    dependencyRisk: Math.round(Number(vector.trust_vector_v1?.dependencyRisk ?? 20)),
+    adversarialRisk: Math.round(Number(vector.trust_vector_v1?.adversarialRisk ?? Number(vector.collusion_risk ?? 0) * 100)),
+    evidenceFreshness: Math.round(Number(vector.trust_vector_v1?.evidenceFreshness ?? Number(vector.freshness ?? 0) * 100)),
+    overallTrust: score
+  };
+  const trustState = deriveTrustState(trustVector, score, trustConfig, vector);
+  const trustPolicyDecision = derivePolicy(trustVector, trustState, reasonCodes);
   const policyActions = [...(policy.actions[band] ?? [])];
   if (decision === "allow_with_validation" && !policyActions.includes("require_dual_validation")) {
     policyActions.push("require_dual_validation");
@@ -509,6 +831,10 @@ export function computeResolution({ passport, snapshot, context, policy, nowIso 
   if (band === "quarantined" && !policyActions.includes("quarantine_subject")) {
     policyActions.push("quarantine_subject");
   }
+  if (!policyActions.includes(`policy_action:${trustPolicyDecision.action}`)) {
+    policyActions.push(`policy_action:${trustPolicyDecision.action}`);
+  }
+  decision = mapActionToLegacyDecision(trustPolicyDecision.action, decision);
 
   return {
     score,
@@ -517,6 +843,23 @@ export function computeResolution({ passport, snapshot, context, policy, nowIso 
     decision,
     reason_codes: reasonCodes,
     policy_actions: policyActions,
+    trust_state: trustState,
+    trust_vector: trustVector,
+    trust_policy: trustPolicyDecision,
+    trust_evidence: {
+      lastEvidenceAt: snapshot.last_evidence_at ?? snapshot.last_event_at ?? nowIso,
+      sampleSize: Number(snapshot.aggregate_counts?.tasks_total ?? 0) + Number(snapshot.aggregate_counts?.validations_total ?? 0),
+      recentEvents: Object.entries(vector.adversarial_event_counts ?? {})
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 8)
+        .map(([eventType, count]) => ({ eventType, count }))
+    },
+    agentic_market: {
+      serviceType: "trust-resolution",
+      pricingHint: "x402-metered",
+      x402Required: true,
+      version: "trust-v1"
+    },
     score_breakdown: {
       identity_integrity: round(Number(vector.identity_integrity ?? 0)),
       task_outcome_quality: round(Number(vector.execution_reliability ?? 0)),
@@ -530,7 +873,9 @@ export function computeResolution({ passport, snapshot, context, policy, nowIso 
       sockpuppet_penalty: round(-Number(vector.sockpuppet_risk ?? 0)),
       validator_bribery_penalty: round(-Number(vector.validator_bribery_risk ?? 0)),
       anomaly_window_penalty: round(-Number(vector.anomaly_window_risk ?? 0)),
-      decay_adjustment: round(-(1 - Number(vector.freshness ?? 0)))
+      decay_adjustment: round(-(1 - Number(vector.freshness ?? 0))),
+      dependency_penalty: round(-dependencyPenalty),
+      adversarial_penalty: round(-adversarialPenalty)
     },
     engine_version: "trust-engine@1.0.0",
     policy_version: `${policy.policy_id}@${policy.version}`,
@@ -543,6 +888,50 @@ export function computeTrustEvent(previousResolution, nextResolution, evidenceId
     return null;
   }
   const delta = nextResolution.score - previousResolution.score;
+  const extraEvents = [];
+  if (previousResolution.trust_state && nextResolution.trust_state && previousResolution.trust_state !== nextResolution.trust_state) {
+    if (nextResolution.trust_state === "QUARANTINED") {
+      extraEvents.push({
+        type: "AGENT_QUARANTINED",
+        severity: "CRITICAL"
+      });
+    }
+    if (["COMPROMISED", "QUARANTINED"].includes(nextResolution.trust_state)) {
+      extraEvents.push({
+        type: "TRUST_COLLAPSE",
+        severity: "CRITICAL"
+      });
+    }
+  }
+  if (previousResolution.trust_policy?.action && nextResolution.trust_policy?.action &&
+    previousResolution.trust_policy.action !== nextResolution.trust_policy.action) {
+    extraEvents.push({
+      type: "POLICY_ACTION_CHANGED",
+      severity: "WARNING"
+    });
+    if (nextResolution.trust_policy.action === "RATE_LIMIT") {
+      extraEvents.push({
+        type: "AGENT_RATE_LIMITED",
+        severity: "WARNING"
+      });
+    }
+    if (nextResolution.trust_policy.action === "REQUIRE_ESCROW") {
+      extraEvents.push({
+        type: "AGENT_ESCROW_REQUIRED",
+        severity: "WARNING"
+      });
+    }
+  }
+  if (
+    Number.isFinite(previousResolution.trust_policy?.routingPriority) &&
+    Number.isFinite(nextResolution.trust_policy?.routingPriority) &&
+    Math.abs(nextResolution.trust_policy.routingPriority - previousResolution.trust_policy.routingPriority) >= 10
+  ) {
+    extraEvents.push({
+      type: "ROUTING_PRIORITY_CHANGED",
+      severity: "INFO"
+    });
+  }
   if (delta >= 10) {
     return {
       type: "trust.spike",
@@ -554,7 +943,8 @@ export function computeTrustEvent(previousResolution, nextResolution, evidenceId
         trigger: { kind: "evidence_delta", evidence_id: evidenceId ?? null },
         context,
         recommended_actions: ["expand_execution_scope"]
-      }
+      },
+      extra_events: [{ type: "TRUST_SPIKE", severity: "INFO" }, ...extraEvents]
     };
   }
   if (delta <= -15 || ["restricted", "quarantined"].includes(nextResolution.band)) {
@@ -573,7 +963,8 @@ export function computeTrustEvent(previousResolution, nextResolution, evidenceId
         trigger: { kind: "validator_reversal", evidence_id: evidenceId ?? null },
         context,
         recommended_actions: actions
-      }
+      },
+      extra_events: [{ type: "TRUST_COLLAPSE", severity: "CRITICAL" }, ...extraEvents]
     };
   }
   if (
@@ -590,7 +981,8 @@ export function computeTrustEvent(previousResolution, nextResolution, evidenceId
         trigger: { kind: "recovery", evidence_id: evidenceId ?? null },
         context,
         recommended_actions: ["restore_standard_routing"]
-      }
+      },
+      extra_events: extraEvents
     };
   }
   if (nextResolution.score < previousResolution.score && nextResolution.reason_codes.includes("fresh_evidence_available") === false) {
@@ -604,7 +996,23 @@ export function computeTrustEvent(previousResolution, nextResolution, evidenceId
         trigger: { kind: "decay", evidence_id: evidenceId ?? null },
         context,
         recommended_actions: ["refresh_domain_evidence"]
-      }
+      },
+      extra_events: [{ type: "TRUST_DECAY", severity: "WARNING" }, ...extraEvents]
+    };
+  }
+  if (extraEvents.length > 0) {
+    return {
+      type: "trust.recovered",
+      data: {
+        prior_score: previousResolution.score,
+        new_score: nextResolution.score,
+        delta,
+        severity: "low",
+        trigger: { kind: "policy_only", evidence_id: evidenceId ?? null },
+        context,
+        recommended_actions: []
+      },
+      extra_events: extraEvents
     };
   }
   return null;

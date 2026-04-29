@@ -9,6 +9,7 @@
   },
   "files": [
     "index.mjs",
+    "agentic-hook.mjs",
     "index.d.ts",
     "generated-contracts.d.ts",
     "README.md"
@@ -26,6 +27,9 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.mjs"
+    },
+    "./agentic-hook": {
+      "default": "./agentic-hook.mjs"
     },
     "./package.json": "./package.json"
   }

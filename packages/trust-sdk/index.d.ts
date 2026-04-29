@@ -374,3 +374,55 @@ export declare class Infopunks {
     ): EventSubscription;
   };
 }
+
+export interface AgenticTrustDecision {
+  subject_id: string;
+  trust_score: number;
+  trust_tier: string;
+  mode: "verified" | "degraded";
+  confidence: number;
+  decision: string;
+  reason: string;
+}
+
+export interface AgenticTrustClientOptions {
+  baseUrl?: string;
+  apiKey?: string | null;
+  minTrustScore?: number;
+  minConfidence?: number;
+  defaultPayment?: Record<string, unknown>;
+}
+
+export declare class UnsafeExecutorError extends Error {
+  code: "UNSAFE_EXECUTOR";
+  decision: AgenticTrustDecision;
+}
+
+export declare function createAgenticTrustClient(options?: AgenticTrustClientOptions): {
+  resolveTrust(input: {
+    subject_id: string;
+    context?: Record<string, unknown>;
+    payment?: Record<string, unknown>;
+  }): Promise<AgenticTrustDecision>;
+  requireTrustedExecutor(input: {
+    subject_id: string;
+    context?: Record<string, unknown>;
+    minScore?: number;
+    minConfidence?: number;
+    payment?: Record<string, unknown>;
+  }): Promise<AgenticTrustDecision>;
+};
+
+export declare function resolveTrust(input: {
+  subject_id: string;
+  context?: Record<string, unknown>;
+  payment?: Record<string, unknown>;
+}): Promise<AgenticTrustDecision>;
+
+export declare function requireTrustedExecutor(input: {
+  subject_id: string;
+  context?: Record<string, unknown>;
+  minScore?: number;
+  minConfidence?: number;
+  payment?: Record<string, unknown>;
+}): Promise<AgenticTrustDecision>;

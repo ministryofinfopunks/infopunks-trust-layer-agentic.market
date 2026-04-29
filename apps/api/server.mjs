@@ -1,4 +1,5 @@
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrustPlatform } from "./lib/platform.mjs";
@@ -8,7 +9,12 @@ import { jsonLog } from "./lib/utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const warRoomRoot = path.resolve(__dirname, "../war-room");
-const defaultDbPath = path.resolve(__dirname, "../../data/infopunks.db");
+const environment = process.env.INFOPUNKS_ENVIRONMENT ?? "local";
+const defaultDataDir = process.env.DATA_DIR
+  ?? ((environment === "local" || environment === "test")
+    ? path.resolve(__dirname, "../../data")
+    : path.join(os.tmpdir(), "infopunks"));
+const defaultDbPath = path.join(defaultDataDir, "infopunks.db");
 const platform = new TrustPlatform({
   dbPath: process.env.INFOPUNKS_DB_PATH || defaultDbPath,
   apiKey: process.env.INFOPUNKS_API_KEY || "dev-infopunks-key"

@@ -51,8 +51,32 @@ export function normalizeResult(operation, upstream, args = {}) {
       reason_codes: toArray(upstream?.reason_codes).filter((item) => typeof item === "string"),
       recommended_validators: toArray(upstream?.recommended_validators),
       policy_actions: toArray(upstream?.policy_actions).filter((item) => typeof item === "string"),
+      trust_state: toStringOrNull(upstream?.trust_state) ?? toStringOrNull(upstream?.trustState),
+      trust_vector: (typeof upstream?.trust_vector === "object" && upstream?.trust_vector !== null)
+        ? upstream.trust_vector
+        : (typeof upstream?.trustVector === "object" && upstream?.trustVector !== null ? upstream.trustVector : null),
+      trust_policy: (typeof upstream?.trust_policy === "object" && upstream?.trust_policy !== null)
+        ? upstream.trust_policy
+        : (typeof upstream?.policy === "object" && upstream?.policy !== null ? upstream.policy : null),
+      trust_evidence: (typeof upstream?.trust_evidence === "object" && upstream?.trust_evidence !== null)
+        ? upstream.trust_evidence
+        : (typeof upstream?.evidence === "object" && upstream?.evidence !== null ? upstream.evidence : null),
+      agentic_market: (typeof upstream?.agentic_market === "object" && upstream?.agentic_market !== null)
+        ? upstream.agentic_market
+        : (typeof upstream?.agenticMarket === "object" && upstream?.agenticMarket !== null ? upstream.agenticMarket : null),
       trace_id: toStringOrNull(upstream?.trace_id),
-      expires_at: toStringOrNull(upstream?.expires_at)
+      expires_at: toStringOrNull(upstream?.expires_at),
+      agentId: toStringOrNull(upstream?.agentId),
+      trustState: toStringOrNull(upstream?.trustState),
+      trustVector: (typeof upstream?.trustVector === "object" && upstream?.trustVector !== null) ? upstream.trustVector : null,
+      policy: (typeof upstream?.policy === "object" && upstream?.policy !== null) ? upstream.policy : null,
+      evidence: (typeof upstream?.evidence === "object" && upstream?.evidence !== null) ? upstream.evidence : null,
+      agenticMarket: (typeof upstream?.agenticMarket === "object" && upstream?.agenticMarket !== null) ? upstream.agenticMarket : null,
+      mode: toStringOrNull(upstream?.mode),
+      trust_score: toNumberOrNull(upstream?.trust_score),
+      trust_tier: toStringOrNull(upstream?.trust_tier),
+      provisional: typeof upstream?.provisional === "boolean" ? upstream.provisional : null,
+      reason: toStringOrNull(upstream?.reason)
     };
   }
   if (operation === "select_validators" || operation === "select_executor") {
