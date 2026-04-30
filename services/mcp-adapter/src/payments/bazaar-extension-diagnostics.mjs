@@ -1,5 +1,6 @@
 const KNOWN_EXTENSION_STATUSES = new Set(["processing", "accepted", "rejected", "error"]);
 const RAW_HEADER_MAX_LENGTH = 4096;
+const MISSING_EXTENSION_RESPONSES_REASON = "EXTENSION-RESPONSES header not present on CDP verify/settle response";
 
 function sanitizeExtensionText(value) {
   if (typeof value !== "string") {
@@ -222,7 +223,7 @@ export function buildBazaarExtensionDiagnostics(headerValue, phase = null) {
   if (!raw) {
     return {
       bazaar_extension_status: "missing",
-      bazaar_extension_reason: null,
+      bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
       bazaar_extension_raw: null,
       bazaar_extension_phase: phase ?? null
     };
@@ -257,7 +258,7 @@ export function mergeBazaarExtensionDiagnostics(primary = null, secondary = null
 
   return {
     bazaar_extension_status: status,
-    bazaar_extension_reason: reason,
+    bazaar_extension_reason: status === "missing" && !reason ? MISSING_EXTENSION_RESPONSES_REASON : reason,
     bazaar_extension_raw: raw,
     bazaar_verify_extension_status: first.bazaar_extension_status ?? "missing",
     bazaar_verify_extension_reason: first.bazaar_extension_reason ?? null,

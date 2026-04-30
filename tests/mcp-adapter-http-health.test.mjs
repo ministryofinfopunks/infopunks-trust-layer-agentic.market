@@ -129,7 +129,10 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(latestReceiptBody.final_status, 200);
     assert.equal(latestReceiptBody.payment_header_used, "PAYMENT-SIGNATURE");
     assert.equal(latestReceiptBody.bazaar_extension_status, "missing");
-    assert.equal(latestReceiptBody.bazaar_extension_reason, null);
+    assert.equal(
+      latestReceiptBody.bazaar_extension_reason,
+      "EXTENSION-RESPONSES header not present on CDP verify/settle response"
+    );
     assert.equal(latestReceiptBody.bazaar_extension_raw, null);
     assert.equal(latestReceiptBody.public_verification_level, "application_receipt_pending_tx_hash");
     assert.equal(latestReceiptBody.tx_hash, null);
@@ -490,6 +493,8 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(challenge.accepts?.[0]?.extra?.name, "USD Coin");
     assert.equal(challenge.accepts?.[0]?.extra?.version, "2");
     assert.equal(challenge.accepts?.[0]?.extra?.symbol, "USDC");
+    assert.equal(challenge.accepts?.[0]?.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
+    assert.equal(challenge.accepts?.[0]?.resource?.extensions?.bazaar?.info?.input?.type, "http");
     assert.equal(challenge.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
     assert.equal(challenge.resource?.mimeType, "application/json");
     assert.equal(challenge.resource?.description.includes("machine-readable risk context"), true);
@@ -503,6 +508,8 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
       {
         type: "http",
         method: "POST",
+        path: "/v1/resolve-trust",
+        contentType: "application/json",
         bodyType: "json",
         body: {
           subject_id: "agent_public_paid_proof",

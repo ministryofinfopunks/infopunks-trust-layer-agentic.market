@@ -156,6 +156,49 @@ function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
   };
 }
 
+function hasBazaarExtensionInPaymentRequirements(paymentRequirements) {
+  if (!paymentRequirements || typeof paymentRequirements !== "object") {
+    return false;
+  }
+  return Boolean(
+    paymentRequirements?.resource?.extensions?.bazaar
+    || paymentRequirements?.extensions?.bazaar
+  );
+}
+
+function logBazaarPathDiagnostics({
+  logger,
+  phase,
+  adapterTraceId = null,
+  bazaarExtensionPresentInRequestContext = null,
+  extensionResponsesReceived = null
+}) {
+  const phaseKey = typeof phase === "string" ? phase.toLowerCase() : null;
+  const requestContextField = phaseKey === "verify"
+    ? "bazaar_extension_present_in_verify_request_context"
+    : (phaseKey === "settle" ? "bazaar_extension_present_in_settle_request_context" : "bazaar_extension_present_in_request_context");
+  const extensionResponsesField = phaseKey === "verify"
+    ? "extension_responses_received_from_verify"
+    : (phaseKey === "settle" ? "extension_responses_received_from_settle" : "extension_responses_received");
+  logger?.info?.({
+    event: "bazaar_extension_path_diagnostics",
+    phase,
+    adapter_trace_id: adapterTraceId,
+    ...(typeof bazaarExtensionPresentInRequestContext === "boolean"
+      ? {
+        bazaar_extension_present_in_request_context: bazaarExtensionPresentInRequestContext,
+        [requestContextField]: bazaarExtensionPresentInRequestContext
+      }
+      : {}),
+    ...(typeof extensionResponsesReceived === "boolean"
+      ? {
+        extension_responses_received: extensionResponsesReceived,
+        [extensionResponsesField]: extensionResponsesReceived
+      }
+      : {})
+  });
+}
+
 function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
   const paymentPayload = payload?.paymentPayload ?? null;
   const paymentRequirements = payload?.paymentRequirements ?? null;
@@ -196,6 +239,7 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
     req_payTo: paymentRequirements?.payTo ?? null,
     req_amount: paymentRequirements?.amount ?? null,
     req_maxTimeoutSeconds: paymentRequirements?.maxTimeoutSeconds ?? null,
+    req_has_bazaar_extension: hasBazaarExtensionInPaymentRequirements(paymentRequirements),
     req_extra_name: paymentRequirements?.extra?.name ?? null,
     req_extra_version: paymentRequirements?.extra?.version ?? null,
     req_extra_symbol: paymentRequirements?.extra?.symbol ?? null
@@ -408,6 +452,14 @@ export class X402Verifier {
           payload
         });
       }
+      if (this.facilitatorProvider === "cdp") {
+        logBazaarPathDiagnostics({
+          logger: this.logger,
+          phase: "verify",
+          adapterTraceId,
+          bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(payload?.paymentRequirements)
+        });
+      }
       const response = await withTimeout(
         async (signal) =>
           fetch(`${this.verifierUrl.replace(/\/$/, "")}/verify`, {
@@ -429,6 +481,12 @@ export class X402Verifier {
           phase: "verify",
           response,
           adapterTraceId
+        });
+        logBazaarPathDiagnostics({
+          logger: this.logger,
+          phase: "verify",
+          adapterTraceId,
+          extensionResponsesReceived: Boolean(cdpExtensionHeaderValue(response))
         });
       }
 
@@ -609,6 +667,12 @@ export class X402Verifier {
       phase: "settle",
       payload
     });
+    logBazaarPathDiagnostics({
+      logger: this.logger,
+      phase: "settle",
+      adapterTraceId,
+      bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(payload?.paymentRequirements)
+    });
 
     try {
       const response = await withTimeout(
@@ -631,6 +695,12 @@ export class X402Verifier {
         phase: "settle",
         response,
         adapterTraceId
+      });
+      logBazaarPathDiagnostics({
+        logger: this.logger,
+        phase: "settle",
+        adapterTraceId,
+        extensionResponsesReceived: Boolean(cdpExtensionHeaderValue(response))
       });
       const responseBody = await response.json().catch(() => ({}));
       if (!response.ok) {

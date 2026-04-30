@@ -7,6 +7,7 @@ import { createAdapterTraceId } from "../observability/tracing.mjs";
 import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const MISSING_EXTENSION_RESPONSES_REASON = "EXTENSION-RESPONSES header not present on CDP verify/settle response";
 const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
 const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
 const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
@@ -20,9 +21,22 @@ const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
 const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
   subject_id: "agent_public_paid_proof",
   trust_score: 40,
+  confidence: 0.82,
   risk_level: "medium",
   route: "allow",
-  status: "allow"
+  status: "allow",
+  reasons: ["policy_default"],
+  receipt: {
+    x402_verified: true,
+    facilitator_provider: "cdp",
+    network: "eip155:8453",
+    asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    price: "10000",
+    bazaar_extension_status: "accepted",
+    bazaar_extension_reason: "discovery metadata accepted",
+    bazaar_extension_raw: "{\"extensions\":[{\"name\":\"bazaar\",\"status\":\"accepted\"}]}"
+  }
 };
 const RESOLVE_TRUST_RESPONSE_SCHEMA = {
   type: "object",
@@ -61,7 +75,9 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
       ...declared.info,
       input: {
         ...declared.info.input,
-        method: "POST"
+        method: "POST",
+        path: "/v1/resolve-trust",
+        contentType: "application/json"
       },
       tags: RESOLVE_TRUST_BAZAAR_TAGS,
       category: "infrastructure"
@@ -77,9 +93,22 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
             method: {
               type: "string",
               enum: ["POST"]
+            },
+            path: {
+              type: "string",
+              const: "/v1/resolve-trust"
+            },
+            contentType: {
+              type: "string",
+              const: "application/json"
             }
           },
-          required: Array.from(new Set([...(declared.schema.properties.input.required ?? []), "method"]))
+          required: Array.from(new Set([
+            ...(declared.schema.properties.input.required ?? []),
+            "method",
+            "path",
+            "contentType"
+          ]))
         },
         tags: {
           type: "array",
@@ -111,7 +140,7 @@ const PUBLIC_PROOF_RECEIPTS = {
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
     bazaar_extension_status: "missing",
-    bazaar_extension_reason: null,
+    bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
     bazaar_extension_raw: null,
     tx_hash: null,
     block_explorer_url: null,
@@ -131,7 +160,7 @@ const PUBLIC_PROOF_RECEIPTS = {
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
     bazaar_extension_status: "missing",
-    bazaar_extension_reason: null,
+    bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
     bazaar_extension_raw: null,
     tx_hash: null,
     block_explorer_url: null,
@@ -404,10 +433,11 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
     }
   }
 
+  const resource = routeResourceMetadata(config, toolDef, resourcePath);
   return {
     x402Version: 2,
     error: "Payment required",
-    resource: routeResourceMetadata(config, toolDef, resourcePath),
+    resource,
     accepts: [
       {
         scheme: config.x402PaymentScheme ?? "exact",
@@ -416,6 +446,7 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
         asset: config.x402PaymentAssetAddress,
         payTo: config.x402PayTo,
         maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
+        resource,
         ...(Object.keys(extra).length > 0 ? { extra } : {})
       }
     ]
@@ -437,6 +468,15 @@ function challengeHeaders(config, toolDef, resourcePath = "/v1/resolve-trust") {
     "PAYMENT-REQUIRED": safeBase64Encode(JSON.stringify(paymentRequired)),
     "www-authenticate": `x402 realm="infopunks", units="${units}", rail="${rail}"`
   };
+}
+
+function hasBazaarExtensionInResource(resource) {
+  return Boolean(resource?.extensions?.bazaar);
+}
+
+function hasBazaarExtensionInChallenge(paymentRequired = null) {
+  return hasBazaarExtensionInResource(paymentRequired?.resource)
+    || hasBazaarExtensionInResource(paymentRequired?.accepts?.[0]?.resource);
 }
 
 function decodePaymentHeader(paymentHeader) {
@@ -731,11 +771,15 @@ function reasonsFromResult(result = {}) {
 
 function resolveBazaarReceiptDiagnostics(receipt = null) {
   const status = receipt?.bazaar_extension_status;
+  const normalizedStatus = typeof status === "string" && status.trim() ? status : "missing";
   const reason = receipt?.bazaar_extension_reason ?? null;
+  const normalizedReason = normalizedStatus === "missing" && !reason
+    ? MISSING_EXTENSION_RESPONSES_REASON
+    : reason;
   const raw = receipt?.bazaar_extension_raw ?? null;
   return {
-    bazaar_extension_status: typeof status === "string" && status.trim() ? status : "missing",
-    bazaar_extension_reason: reason,
+    bazaar_extension_status: normalizedStatus,
+    bazaar_extension_reason: normalizedReason,
     bazaar_extension_raw: raw
   };
 }
@@ -1031,6 +1075,8 @@ function sanitizePublicEvent(event = {}) {
     ? String(event.route ?? status).toLowerCase()
     : null;
   const bazaarStatus = event.bazaar_extension_status ?? null;
+  const normalizedBazaarStatus = typeof bazaarStatus === "string" && bazaarStatus.trim() ? bazaarStatus : "missing";
+  const bazaarReason = event.bazaar_extension_reason ?? null;
   return {
     event_id: event.event_id ?? null,
     event_type: event.event_type ?? null,
@@ -1047,8 +1093,10 @@ function sanitizePublicEvent(event = {}) {
     price: event.price ?? null,
     risk_level: event.risk_level ?? null,
     reason: event.reason ?? null,
-    bazaar_extension_status: typeof bazaarStatus === "string" && bazaarStatus.trim() ? bazaarStatus : "missing",
-    bazaar_extension_reason: event.bazaar_extension_reason ?? null,
+    bazaar_extension_status: normalizedBazaarStatus,
+    bazaar_extension_reason: normalizedBazaarStatus === "missing" && !bazaarReason
+      ? MISSING_EXTENSION_RESPONSES_REASON
+      : bazaarReason,
     bazaar_extension_raw: event.bazaar_extension_raw ?? null
   };
 }
@@ -1057,16 +1105,20 @@ async function resolveReceiptBazaarDiagnostics(mcpServer, receiptId) {
   if (!receiptId || typeof mcpServer?.store?.getReceiptById !== "function") {
     return {
       bazaar_extension_status: "missing",
-      bazaar_extension_reason: null,
+      bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
       bazaar_extension_raw: null
     };
   }
   const receipt = await mcpServer.store.getReceiptById(receiptId);
   const metadata = receipt?.metadata ?? {};
   const status = metadata?.bazaar_extension_status;
+  const normalizedStatus = typeof status === "string" && status.trim() ? status : "missing";
+  const reason = metadata?.bazaar_extension_reason ?? null;
   return {
-    bazaar_extension_status: typeof status === "string" && status.trim() ? status : "missing",
-    bazaar_extension_reason: metadata?.bazaar_extension_reason ?? null,
+    bazaar_extension_status: normalizedStatus,
+    bazaar_extension_reason: normalizedStatus === "missing" && !reason
+      ? MISSING_EXTENSION_RESPONSES_REASON
+      : reason,
     bazaar_extension_raw: metadata?.bazaar_extension_raw ?? null
   };
 }
@@ -1168,10 +1220,13 @@ function buildPublicReceiptProof({ receiptId, receipt = null, event = null, base
     ?? metadata?.bazaar_extension_status
     ?? base?.bazaar_extension_status
     ?? "missing";
-  const bazaarExtensionReason = event?.bazaar_extension_reason
+  const bazaarExtensionReasonRaw = event?.bazaar_extension_reason
     ?? metadata?.bazaar_extension_reason
     ?? base?.bazaar_extension_reason
     ?? null;
+  const bazaarExtensionReason = bazaarExtensionStatus === "missing" && !bazaarExtensionReasonRaw
+    ? MISSING_EXTENSION_RESPONSES_REASON
+    : bazaarExtensionReasonRaw;
   const bazaarExtensionRaw = event?.bazaar_extension_raw
     ?? metadata?.bazaar_extension_raw
     ?? base?.bazaar_extension_raw
@@ -1406,6 +1461,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       const toolDef = findTool("resolve_trust");
       const headerPayment = paymentFromHeaders(req.headers, config.x402FacilitatorProvider);
       if (!headerPayment && !hasRequestBody(req)) {
+        const challenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
         sendJson(
           res,
           402,
@@ -1427,7 +1483,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           adapter_trace_id: null,
           endpoint: endpointPath,
           entity_id: null,
-          code: "ENTITLEMENT_REQUIRED"
+          code: "ENTITLEMENT_REQUIRED",
+          bazaar_extension_present_in_402_challenge: hasBazaarExtensionInChallenge(challenge)
         });
         return;
       }
@@ -1445,6 +1502,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers, config.x402FacilitatorProvider);
       const suppliedPayment = headerPayment || hasBodyPayment(body?.payment);
       if (!suppliedPayment) {
+        const challenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
         sendJson(
           res,
           402,
@@ -1466,7 +1524,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           adapter_trace_id: null,
           endpoint: endpointPath,
           entity_id: null,
-          code: "ENTITLEMENT_REQUIRED"
+          code: "ENTITLEMENT_REQUIRED",
+          bazaar_extension_present_in_402_challenge: hasBazaarExtensionInChallenge(challenge)
         });
         return;
       }
@@ -1587,13 +1646,17 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         const extraHeaders = PAYMENT_ERROR_CODES.has(code) ? challengeHeaders(config, toolDef, endpointPath) : {};
 
         if (PAYMENT_ERROR_CODES.has(code)) {
+          const challenge = statusCode === 402 ? paymentRequiredEnvelope(config, toolDef, endpointPath) : null;
           logger.info({
             event: statusCode === 402 ? "402_challenge_issued" : "payment_failed",
             request_id: requestId,
             adapter_trace_id: adapterTraceId,
             endpoint: endpointPath,
             entity_id: normalized.entity_id,
-            code
+            code,
+            ...(statusCode === 402
+              ? { bazaar_extension_present_in_402_challenge: hasBazaarExtensionInChallenge(challenge) }
+              : {})
           });
         } else {
           logger.error({

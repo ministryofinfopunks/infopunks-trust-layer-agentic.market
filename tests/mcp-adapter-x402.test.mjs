@@ -289,6 +289,7 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   let postedSettleBody = null;
   const cdpShapeLogs = [];
   const cdpExtensionLogs = [];
+  const bazaarPathLogs = [];
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init?.body ?? "{}");
     if (String(url).endsWith("/verify")) {
@@ -349,7 +350,7 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
     facilitatorProvider: "cdp",
     verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
     cdpApiKeyId: "test-key-id",
-    cdpApiKeySecret: "test-key-secret",
+    cdpApiKeySecret: "test-key-cred",
     timeoutMs: 2000,
     logger: {
       info(payload) {
@@ -358,6 +359,9 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
         }
         if (payload?.event === "cdp_extension_responses") {
           cdpExtensionLogs.push(payload);
+        }
+        if (payload?.event === "bazaar_extension_path_diagnostics") {
+          bazaarPathLogs.push(payload);
         }
       },
       warn() {},
@@ -375,6 +379,27 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
       asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
       payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
       maxTimeoutSeconds: 300,
+      resource: {
+        resource: "https://infopunks.example/v1/resolve-trust",
+        url: "https://infopunks.example/v1/resolve-trust",
+        mimeType: "application/json",
+        extensions: {
+          bazaar: {
+            routeTemplate: "/v1/resolve-trust",
+            info: {
+              input: {
+                type: "http",
+                method: "POST",
+                path: "/v1/resolve-trust",
+                contentType: "application/json",
+                bodyType: "json",
+                body: { subject_id: "agent_public_paid_proof" }
+              },
+              output: { type: "json", example: { subject_id: "agent_public_paid_proof", trust_score: 40, route: "allow" } }
+            }
+          }
+        }
+      },
       extra: {
         name: "USDC",
         version: "2",
@@ -462,8 +487,28 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
 
   const verifyExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "verify");
   const settleExtensionLog = cdpExtensionLogs.find((entry) => entry.phase === "settle");
+  const verifyRequestContextLog = bazaarPathLogs.find(
+    (entry) => entry.phase === "verify" && Object.hasOwn(entry, "bazaar_extension_present_in_verify_request_context")
+  );
+  const settleRequestContextLog = bazaarPathLogs.find(
+    (entry) => entry.phase === "settle" && Object.hasOwn(entry, "bazaar_extension_present_in_settle_request_context")
+  );
+  const verifyExtensionPresenceLog = bazaarPathLogs.find(
+    (entry) => entry.phase === "verify" && Object.hasOwn(entry, "extension_responses_received_from_verify")
+  );
+  const settleExtensionPresenceLog = bazaarPathLogs.find(
+    (entry) => entry.phase === "settle" && Object.hasOwn(entry, "extension_responses_received_from_settle")
+  );
   assert.ok(verifyExtensionLog);
   assert.ok(settleExtensionLog);
+  assert.ok(verifyRequestContextLog);
+  assert.ok(settleRequestContextLog);
+  assert.ok(verifyExtensionPresenceLog);
+  assert.ok(settleExtensionPresenceLog);
+  assert.equal(verifyRequestContextLog.bazaar_extension_present_in_verify_request_context, true);
+  assert.equal(settleRequestContextLog.bazaar_extension_present_in_settle_request_context, true);
+  assert.equal(verifyExtensionPresenceLog.extension_responses_received_from_verify, true);
+  assert.equal(settleExtensionPresenceLog.extension_responses_received_from_settle, true);
   assert.equal(verifyExtensionLog.cdp_status, 200);
   assert.equal(verifyExtensionLog.extension_responses_header_present, true);
   assert.equal(
@@ -545,7 +590,7 @@ test("cdp verifier normalizes nonce/signature byte arrays to hex strings for ver
     facilitatorProvider: "cdp",
     verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
     cdpApiKeyId: "test-key-id",
-    cdpApiKeySecret: "test-key-secret",
+    cdpApiKeySecret: "test-key-cred",
     timeoutMs: 2000,
     logger: null
   });
@@ -609,6 +654,81 @@ test("cdp verifier normalizes nonce/signature byte arrays to hex strings for ver
   assert.match(postedVerifyBody.paymentPayload.payload.signature, /^0x[0-9a-f]{130}$/i);
   assert.equal(postedSettleBody.paymentPayload.payload.authorization.nonce, expectedNonceHex);
   assert.equal(postedSettleBody.paymentPayload.payload.signature, expectedSignatureHex);
+});
+
+test("cdp verifier marks missing EXTENSION-RESPONSES with explicit reason", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        isValid: true,
+        verifier_reference: "rcpt_cdp_missing_header",
+        settlement_status: "settled"
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-cred",
+    timeoutMs: 2000,
+    logger: null
+  });
+  verifier.authHeaders = async () => ({});
+
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300,
+      resource: {
+        resource: "https://infopunks.example/v1/resolve-trust",
+        extensions: {
+          bazaar: { routeTemplate: "/v1/resolve-trust" }
+        }
+      }
+    },
+    payload: {
+      "authorization": {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
+    }
+  };
+
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_missing_ext_headers",
+    entitlement: null
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.extension_diagnostics?.bazaar_extension_status, "missing");
+  assert.equal(
+    result.extension_diagnostics?.bazaar_extension_reason,
+    "EXTENSION-RESPONSES header not present on CDP verify/settle response"
+  );
 });
 
 test("entitlement service creates provisional receipt and spend state", async (t) => {

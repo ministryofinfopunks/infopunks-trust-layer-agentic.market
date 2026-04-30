@@ -80,9 +80,13 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
   assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
   assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
+  assert.equal(decoded.resource.extensions.bazaar.info.input.contentType, "application/json");
   assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
+  assert.equal(decoded.accepts[0].resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.accepts[0].resource.extensions.bazaar.info.input.type, "http");
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
   assert.deepEqual(
@@ -180,6 +184,8 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
     type: "http",
     method: "POST",
+    path: "/v1/resolve-trust",
+    contentType: "application/json",
     bodyType: "json",
     body: {
       subject_id: "agent_public_paid_proof",
