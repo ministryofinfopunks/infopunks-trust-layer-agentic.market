@@ -51,7 +51,10 @@ function normalizeEvent(event = {}) {
     price: normalizeString(event.price),
     amount: normalizeNumber(event.amount),
     error_code: normalizeString(event.error_code),
-    reason: normalizeString(event.reason)
+    reason: normalizeString(event.reason),
+    bazaar_extension_status: normalizeString(event.bazaar_extension_status),
+    bazaar_extension_reason: normalizeString(event.bazaar_extension_reason),
+    bazaar_extension_raw: normalizeString(event.bazaar_extension_raw)
   };
 }
 

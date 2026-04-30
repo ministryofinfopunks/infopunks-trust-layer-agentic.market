@@ -192,7 +192,10 @@ export class PostgresAdapterStateStore {
         price TEXT,
         amount DOUBLE PRECISION,
         error_code TEXT,
-        reason TEXT
+        reason TEXT,
+        bazaar_extension_status TEXT,
+        bazaar_extension_reason TEXT,
+        bazaar_extension_raw TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
@@ -203,7 +206,10 @@ export class PostgresAdapterStateStore {
       ["facilitator_provider", "TEXT"],
       ["network", "TEXT"],
       ["pay_to", "TEXT"],
-      ["price", "TEXT"]
+      ["price", "TEXT"],
+      ["bazaar_extension_status", "TEXT"],
+      ["bazaar_extension_reason", "TEXT"],
+      ["bazaar_extension_raw", "TEXT"]
     ]) {
       await this.pool.query(`ALTER TABLE war_room_events ADD COLUMN IF NOT EXISTS ${column} ${type}`);
     }
@@ -380,7 +386,10 @@ export class PostgresAdapterStateStore {
       price: event.price ?? null,
       amount: Number.isFinite(Number(event.amount)) ? Number(event.amount) : null,
       error_code: event.error_code ?? null,
-      reason: event.reason ?? null
+      reason: event.reason ?? null,
+      bazaar_extension_status: event.bazaar_extension_status ?? null,
+      bazaar_extension_reason: event.bazaar_extension_reason ?? null,
+      bazaar_extension_raw: event.bazaar_extension_raw ?? null
     };
 
     await this.pool.query(
@@ -388,8 +397,9 @@ export class PostgresAdapterStateStore {
         INSERT INTO war_room_events (
           event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
           mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
-          network, pay_to, price, amount, error_code, reason
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          network, pay_to, price, amount, error_code, reason,
+          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
       `,
       [
         normalized.event_id,
@@ -411,7 +421,10 @@ export class PostgresAdapterStateStore {
         normalized.price,
         normalized.amount,
         normalized.error_code,
-        normalized.reason
+        normalized.reason,
+        normalized.bazaar_extension_status,
+        normalized.bazaar_extension_reason,
+        normalized.bazaar_extension_raw
       ]
     );
 
@@ -424,7 +437,8 @@ export class PostgresAdapterStateStore {
       `
         SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
                mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
-               network, pay_to, price, amount, error_code, reason
+               network, pay_to, price, amount, error_code, reason,
+               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
         FROM war_room_events
         ORDER BY timestamp DESC
         LIMIT $1
@@ -727,6 +741,25 @@ export class PostgresAdapterStateStore {
       `UPDATE payment_receipts SET internal_trace_id = $1, updated_at = NOW() WHERE receipt_id = $2`,
       [internalTraceId ?? null, receiptId]
     );
+  }
+
+  async updateReceiptMetadata(receiptId, metadataPatch = {}) {
+    if (!receiptId || !metadataPatch || typeof metadataPatch !== "object") {
+      return null;
+    }
+    const existing = await this.getReceiptById(receiptId);
+    if (!existing) {
+      return null;
+    }
+    const mergedMetadata = {
+      ...(existing.metadata ?? {}),
+      ...metadataPatch
+    };
+    await this.pool.query(
+      `UPDATE payment_receipts SET metadata_json = $1, updated_at = NOW() WHERE receipt_id = $2`,
+      [toJson(mergedMetadata), receiptId]
+    );
+    return mergedMetadata;
   }
 
   async getReceiptById(receiptId) {

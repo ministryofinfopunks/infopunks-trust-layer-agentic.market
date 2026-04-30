@@ -424,7 +424,11 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   assert.equal(postedVerifyBody.paymentPayload.payload.authorization.nonce, paymentPayload.payload.authorization.nonce);
   assert.equal(postedVerifyBody.paymentPayload.payload.signature, paymentPayload.payload.signature);
   assert.equal(result.ok, true);
+  assert.equal(result.extension_diagnostics?.bazaar_extension_status, "accepted");
+  assert.equal(result.extension_diagnostics?.bazaar_extension_reason, "discovery metadata accepted");
   assert.equal(settleResult.ok, true);
+  assert.equal(settleResult.extension_diagnostics?.bazaar_extension_status, "processing");
+  assert.equal(settleResult.extension_diagnostics?.bazaar_extension_reason, "awaiting indexing");
   assert.deepEqual(postedSettleBody.paymentRequirements, postedVerifyBody.paymentRequirements);
   assert.deepEqual(postedSettleBody.paymentPayload, postedVerifyBody.paymentPayload);
 

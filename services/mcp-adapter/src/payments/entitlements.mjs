@@ -1,6 +1,7 @@
 import { TOOL_PRICING } from "../config/pricing.mjs";
 import { canonicalAddressForSymbol } from "../config/x402-token-metadata.mjs";
 import { makeAdapterError } from "../schemas/error-schema.mjs";
+import { buildBazaarExtensionDiagnostics, mergeBazaarExtensionDiagnostics } from "./bazaar-extension-diagnostics.mjs";
 
 function isHexAddress(value) {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/i.test(value);
@@ -262,6 +263,8 @@ export class EntitlementService {
       adapterTraceId,
       entitlement
     });
+    const verifyExtensionDiagnostics = verification?.extension_diagnostics ?? buildBazaarExtensionDiagnostics(null, "verify");
+    const verifyOnlyDiagnostics = mergeBazaarExtensionDiagnostics(verifyExtensionDiagnostics, null);
 
     if (!verification.ok) {
       this.logger?.warn?.({
@@ -309,7 +312,8 @@ export class EntitlementService {
         network: effectiveNetwork,
         payTo: this.config.x402PayTo ?? null,
         price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
-        asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
+        asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null,
+        ...verifyOnlyDiagnostics
       },
       spendLimitUnits: limit
     });
@@ -343,6 +347,30 @@ export class EntitlementService {
       throw makeAdapterError("PAYMENT_VERIFICATION_FAILED", "Payment reservation failed.", reservation.details ?? {}, false, 402);
     }
     const receipt = reservation.receipt;
+    let settleResult = null;
+    let mergedExtensionDiagnostics = verifyOnlyDiagnostics;
+    try {
+      settleResult = await this.verifier.settle({ payment, adapterTraceId });
+      const settleExtensionDiagnostics = settleResult?.extension_diagnostics ?? buildBazaarExtensionDiagnostics(null, "settle");
+      mergedExtensionDiagnostics = mergeBazaarExtensionDiagnostics(verifyExtensionDiagnostics, settleExtensionDiagnostics);
+      if (typeof this.store.updateReceiptMetadata === "function") {
+        await this.store.updateReceiptMetadata(receipt.receipt_id, {
+          ...mergedExtensionDiagnostics,
+          settlement_status: settleResult?.details?.settlement_status ?? verification.settlement_status ?? "provisional"
+        });
+      }
+    } catch (error) {
+      this.logger?.warn?.({
+        event: "x402_settle_non_blocking_failed",
+        adapter_trace_id: adapterTraceId,
+        receipt_id: receipt.receipt_id,
+        message: error?.message ?? "Settle call failed."
+      });
+    }
+    const effectiveSettlementStatus = settleResult?.details?.settlement_status
+      ?? verification.settlement_status
+      ?? receipt.settlement_status
+      ?? "provisional";
 
     this.logger?.info?.({
       event: "billing_ledger_entry",
@@ -395,7 +423,9 @@ export class EntitlementService {
         network: effectiveNetwork,
         payTo: this.config.x402PayTo ?? null,
         price: this.config.x402Price ?? this.config.x402PriceUsd ?? this.config.x402PricePerUnitAtomic ?? null,
-        asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null
+        asset: paymentAssetRaw ?? assetAddressForSymbol(acceptedAssets[0], effectiveNetwork) ?? acceptedAssets[0] ?? null,
+        settlement_status: effectiveSettlementStatus,
+        ...mergedExtensionDiagnostics
       },
       spend_controls: await this.store.spendState(receipt.payer),
       verifier_reference: receipt.verifier_reference,

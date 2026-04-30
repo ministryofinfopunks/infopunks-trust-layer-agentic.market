@@ -110,6 +110,9 @@ const PUBLIC_PROOF_RECEIPTS = {
     final_status: 200,
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
+    bazaar_extension_status: "missing",
+    bazaar_extension_reason: null,
+    bazaar_extension_raw: null,
     tx_hash: null,
     block_explorer_url: null,
     verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
@@ -127,6 +130,9 @@ const PUBLIC_PROOF_RECEIPTS = {
     final_status: 200,
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
+    bazaar_extension_status: "missing",
+    bazaar_extension_reason: null,
+    bazaar_extension_raw: null,
     tx_hash: null,
     block_explorer_url: null,
     verification_note: "Public receipt proof for a successful paid x402/CDP trust-resolution call on Base mainnet."
@@ -723,6 +729,17 @@ function reasonsFromResult(result = {}) {
   return ["policy_default"];
 }
 
+function resolveBazaarReceiptDiagnostics(receipt = null) {
+  const status = receipt?.bazaar_extension_status;
+  const reason = receipt?.bazaar_extension_reason ?? null;
+  const raw = receipt?.bazaar_extension_raw ?? null;
+  return {
+    bazaar_extension_status: typeof status === "string" && status.trim() ? status : "missing",
+    bazaar_extension_reason: reason,
+    bazaar_extension_raw: raw
+  };
+}
+
 function toResolveTrustV1Response(request, toolOutput, config) {
   const result = toolOutput?.result ?? {};
   const trustResponse = toTrustScoreResponse(request, toolOutput);
@@ -736,6 +753,7 @@ function toResolveTrustV1Response(request, toolOutput, config) {
     ?? config.x402PaymentAssetAddress
     ?? (config.x402AcceptedAssets ?? [])[0]
     ?? null;
+  const bazaarDiagnostics = resolveBazaarReceiptDiagnostics(receipt);
 
   return {
     subject_id: String(result.subject_id ?? request.entity_id),
@@ -754,7 +772,10 @@ function toResolveTrustV1Response(request, toolOutput, config) {
       price: receipt?.price ?? config.x402Price ?? config.x402PriceUsd ?? config.x402PricePerUnitAtomic ?? null,
       payment_receipt_id: toolOutput?.meta?.payment_receipt_id ?? null,
       verifier_reference: receipt?.verifier_reference ?? toolOutput?.meta?.verifier_reference ?? null,
-      settlement_status: receipt?.settlement_status ?? null
+      settlement_status: receipt?.settlement_status ?? null,
+      bazaar_extension_status: bazaarDiagnostics.bazaar_extension_status,
+      bazaar_extension_reason: bazaarDiagnostics.bazaar_extension_reason,
+      bazaar_extension_raw: bazaarDiagnostics.bazaar_extension_raw
     }
   };
 }
@@ -947,7 +968,10 @@ function buildOpenApiJson(origin, config) {
                 price: { type: "string" },
                 risk_level: { type: "string" },
                 receipt_id: { type: "string" },
-                reason: { type: "string" }
+                reason: { type: "string" },
+                bazaar_extension_status: { type: "string" },
+                bazaar_extension_reason: { type: "string" },
+                bazaar_extension_raw: { type: "string" }
                           }
                         }
                       }
@@ -986,7 +1010,10 @@ function buildOpenApiJson(origin, config) {
                 network: { type: "string" },
                 asset: { type: "string" },
                 payTo: { type: "string" },
-                price: { type: "string" }
+                price: { type: "string" },
+                bazaar_extension_status: { type: "string" },
+                bazaar_extension_reason: { type: "string" },
+                bazaar_extension_raw: { type: "string" }
               },
               required: ["x402_verified", "network", "asset"]
             }
@@ -1003,6 +1030,7 @@ function sanitizePublicEvent(event = {}) {
   const route = ["allow", "degrade", "block", "quarantine"].includes(String(event.route ?? status ?? "").toLowerCase())
     ? String(event.route ?? status).toLowerCase()
     : null;
+  const bazaarStatus = event.bazaar_extension_status ?? null;
   return {
     event_id: event.event_id ?? null,
     event_type: event.event_type ?? null,
@@ -1018,7 +1046,40 @@ function sanitizePublicEvent(event = {}) {
     payTo: event.payTo ?? event.pay_to ?? null,
     price: event.price ?? null,
     risk_level: event.risk_level ?? null,
-    reason: event.reason ?? null
+    reason: event.reason ?? null,
+    bazaar_extension_status: typeof bazaarStatus === "string" && bazaarStatus.trim() ? bazaarStatus : "missing",
+    bazaar_extension_reason: event.bazaar_extension_reason ?? null,
+    bazaar_extension_raw: event.bazaar_extension_raw ?? null
+  };
+}
+
+async function resolveReceiptBazaarDiagnostics(mcpServer, receiptId) {
+  if (!receiptId || typeof mcpServer?.store?.getReceiptById !== "function") {
+    return {
+      bazaar_extension_status: "missing",
+      bazaar_extension_reason: null,
+      bazaar_extension_raw: null
+    };
+  }
+  const receipt = await mcpServer.store.getReceiptById(receiptId);
+  const metadata = receipt?.metadata ?? {};
+  const status = metadata?.bazaar_extension_status;
+  return {
+    bazaar_extension_status: typeof status === "string" && status.trim() ? status : "missing",
+    bazaar_extension_reason: metadata?.bazaar_extension_reason ?? null,
+    bazaar_extension_raw: metadata?.bazaar_extension_raw ?? null
+  };
+}
+
+async function sanitizePublicEventWithDiagnostics(mcpServer, event = {}) {
+  const sanitized = sanitizePublicEvent(event);
+  if (sanitized.bazaar_extension_status !== "missing" || !sanitized.receipt_id) {
+    return sanitized;
+  }
+  const diagnostics = await resolveReceiptBazaarDiagnostics(mcpServer, sanitized.receipt_id);
+  return {
+    ...sanitized,
+    ...diagnostics
   };
 }
 
@@ -1103,6 +1164,18 @@ function buildPublicReceiptProof({ receiptId, receipt = null, event = null, base
   const tool = receipt?.tool_name ?? event?.tool ?? base?.tool ?? "resolve_trust";
   const payTo = event?.payTo ?? event?.pay_to ?? metadata.payTo ?? metadata.pay_to ?? base?.payTo ?? null;
   const price = event?.price ?? metadata.price ?? base?.price ?? null;
+  const bazaarExtensionStatus = event?.bazaar_extension_status
+    ?? metadata?.bazaar_extension_status
+    ?? base?.bazaar_extension_status
+    ?? "missing";
+  const bazaarExtensionReason = event?.bazaar_extension_reason
+    ?? metadata?.bazaar_extension_reason
+    ?? base?.bazaar_extension_reason
+    ?? null;
+  const bazaarExtensionRaw = event?.bazaar_extension_raw
+    ?? metadata?.bazaar_extension_raw
+    ?? base?.bazaar_extension_raw
+    ?? null;
   const chain = base?.chain ?? chainLabelForNetwork(network);
   return {
     project: base?.project ?? "Infopunks Trust Layer",
@@ -1129,6 +1202,9 @@ function buildPublicReceiptProof({ receiptId, receipt = null, event = null, base
     payment_header_used: base?.payment_header_used ?? null,
     verifier_reference: receipt?.verifier_reference ?? null,
     receipt_status: receipt?.receipt_status ?? null,
+    bazaar_extension_status: bazaarExtensionStatus,
+    bazaar_extension_reason: bazaarExtensionReason,
+    bazaar_extension_raw: bazaarExtensionRaw,
     verification_note: base?.verification_note ?? "Public receipt proof for a successful paid x402 trust-resolution call.",
     tx_hash: txHash,
     block_explorer_url: blockExplorerUrl(network, txHash),
@@ -1194,8 +1270,12 @@ function renderProofPage({ latestProof, previousReceiptId }) {
     `network: ${latestProof.chain ?? latestProof.network ?? "unknown"}`,
     `chain_id: ${latestProof.network}`,
     `tool: ${latestProof.tool}`,
-    `settlement: ${settlement}`
+    `settlement: ${settlement}`,
+    `bazaar_extension_status: ${latestProof.bazaar_extension_status ?? "missing"}`
   ];
+  if (latestProof.bazaar_extension_reason) {
+    lines.push(`bazaar_extension_reason: ${latestProof.bazaar_extension_reason}`);
+  }
   if (latestProof.tx_hash) {
     lines.push(`tx_hash: ${latestProof.tx_hash}`);
   }
@@ -1307,7 +1387,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
     if (method === "GET" && url.pathname === "/v1/events/recent") {
       const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 25));
       const events = await mcpServer.warRoomFeed?.listLatest?.(limit) ?? [];
-      const sanitized = Array.isArray(events) ? events.slice(0, limit).map((entry) => sanitizePublicEvent(entry)) : [];
+      const sliced = Array.isArray(events) ? events.slice(0, limit) : [];
+      const sanitized = await Promise.all(sliced.map((entry) => sanitizePublicEventWithDiagnostics(mcpServer, entry)));
       sendJson(
         res,
         200,
@@ -1472,6 +1553,9 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           network: trustResponse.receipt?.network ?? null,
           payTo: trustResponse.receipt?.payTo ?? config.x402PayTo ?? null,
           price: trustResponse.receipt?.price ?? config.x402Price ?? config.x402PricePerUnitAtomic ?? null,
+          bazaar_extension_status: trustResponse.receipt?.bazaar_extension_status ?? "missing",
+          bazaar_extension_reason: trustResponse.receipt?.bazaar_extension_reason ?? null,
+          bazaar_extension_raw: trustResponse.receipt?.bazaar_extension_raw ?? null,
           reason: Array.isArray(trustResponse.reasons) && trustResponse.reasons.length > 0 ? trustResponse.reasons[0] : null
         });
         logger.info({

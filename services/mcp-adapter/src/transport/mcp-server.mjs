@@ -539,6 +539,9 @@ export class McpServer {
           network: billing?.x402_receipt?.network ?? (this.config.x402SupportedNetworks ?? [])[0] ?? null,
           payTo: billing?.x402_receipt?.payTo ?? this.config.x402PayTo ?? null,
           price: billing?.x402_receipt?.price ?? this.config.x402Price ?? this.config.x402PricePerUnitAtomic ?? null,
+          bazaar_extension_status: billing?.x402_receipt?.bazaar_extension_status ?? "missing",
+          bazaar_extension_reason: billing?.x402_receipt?.bazaar_extension_reason ?? null,
+          bazaar_extension_raw: billing?.x402_receipt?.bazaar_extension_raw ?? null,
           amount: billing?.billed_units ?? toolDef.pricing?.units ?? 0,
           error_code: null,
           reason: firstReason(normalized)

@@ -94,6 +94,11 @@ export class AdapterStateStore {
         SET internal_trace_id = ?, updated_at = ?
         WHERE receipt_id = ?
       `),
+      setReceiptMetadata: this.db.prepare(`
+        UPDATE payment_receipts
+        SET metadata_json = ?, updated_at = ?
+        WHERE receipt_id = ?
+      `),
       getReceiptById: this.db.prepare(`
         SELECT receipt_id, verifier_reference, proof_id, session_id, payer, tool_name, billed_units,
                receipt_status, settlement_status, provisional_at, settled_at, reversed_at, last_error,
@@ -245,13 +250,15 @@ export class AdapterStateStore {
         INSERT INTO war_room_events (
           event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
           mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
-          network, pay_to, price, amount, error_code, reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          network, pay_to, price, amount, error_code, reason,
+          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       listWarRoomEvents: this.db.prepare(`
         SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
                mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
-               network, pay_to, price, amount, error_code, reason
+               network, pay_to, price, amount, error_code, reason,
+               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
         FROM war_room_events
         ORDER BY timestamp DESC
         LIMIT ?
@@ -418,7 +425,10 @@ export class AdapterStateStore {
         price TEXT,
         amount REAL,
         error_code TEXT,
-        reason TEXT
+        reason TEXT,
+        bazaar_extension_status TEXT,
+        bazaar_extension_reason TEXT,
+        bazaar_extension_raw TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
@@ -435,7 +445,10 @@ export class AdapterStateStore {
       ["facilitator_provider", "TEXT"],
       ["network", "TEXT"],
       ["pay_to", "TEXT"],
-      ["price", "TEXT"]
+      ["price", "TEXT"],
+      ["bazaar_extension_status", "TEXT"],
+      ["bazaar_extension_reason", "TEXT"],
+      ["bazaar_extension_raw", "TEXT"]
     ]) {
       try {
         this.db.exec(`ALTER TABLE war_room_events ADD COLUMN ${column[0]} ${column[1]};`);
@@ -612,7 +625,10 @@ export class AdapterStateStore {
       price: event.price ?? null,
       amount: Number.isFinite(Number(event.amount)) ? Number(event.amount) : null,
       error_code: event.error_code ?? null,
-      reason: event.reason ?? null
+      reason: event.reason ?? null,
+      bazaar_extension_status: event.bazaar_extension_status ?? null,
+      bazaar_extension_reason: event.bazaar_extension_reason ?? null,
+      bazaar_extension_raw: event.bazaar_extension_raw ?? null
     };
     this.stmt.insertWarRoomEvent.run(
       normalized.event_id,
@@ -634,7 +650,10 @@ export class AdapterStateStore {
       normalized.price,
       normalized.amount,
       normalized.error_code,
-      normalized.reason
+      normalized.reason,
+      normalized.bazaar_extension_status,
+      normalized.bazaar_extension_reason,
+      normalized.bazaar_extension_raw
     );
     return normalized;
   }
@@ -874,6 +893,23 @@ export class AdapterStateStore {
 
   setReceiptInternalTrace(receiptId, internalTraceId) {
     this.stmt.setReceiptInternalTrace.run(internalTraceId ?? null, nowIso(), receiptId);
+  }
+
+  updateReceiptMetadata(receiptId, metadataPatch = {}) {
+    if (!receiptId || !metadataPatch || typeof metadataPatch !== "object") {
+      return null;
+    }
+    const existing = this.getReceiptById(receiptId);
+    if (!existing) {
+      return null;
+    }
+    const mergedMetadata = {
+      ...(existing.metadata ?? {}),
+      ...metadataPatch
+    };
+    this.stmt.setReceiptMetadata.run(toJson(mergedMetadata), nowIso(), receiptId);
+    const updated = this.getReceiptById(receiptId);
+    return updated?.metadata ?? mergedMetadata;
   }
 
   getReceiptById(receiptId) {

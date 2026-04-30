@@ -113,6 +113,7 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(proofText.includes("PAID CALL VERIFIED"), true);
     assert.equal(proofText.includes("latest_receipt_id: xrc_735986e0-fe0c-4214-8e72-add8093958ca"), true);
     assert.equal(proofText.includes("previous_receipt_id: xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e"), true);
+    assert.equal(proofText.includes("bazaar_extension_status: missing"), true);
 
     const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_735986e0-fe0c-4214-8e72-add8093958ca`);
     assert.equal(latestReceipt.status, 200);
@@ -127,6 +128,9 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(latestReceiptBody.payTo, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
     assert.equal(latestReceiptBody.final_status, 200);
     assert.equal(latestReceiptBody.payment_header_used, "PAYMENT-SIGNATURE");
+    assert.equal(latestReceiptBody.bazaar_extension_status, "missing");
+    assert.equal(latestReceiptBody.bazaar_extension_reason, null);
+    assert.equal(latestReceiptBody.bazaar_extension_raw, null);
     assert.equal(latestReceiptBody.public_verification_level, "application_receipt_pending_tx_hash");
     assert.equal(latestReceiptBody.tx_hash, null);
     assert.equal(latestReceiptBody.block_explorer_url, null);
@@ -321,6 +325,7 @@ test("public proof endpoints stay consistent with recent paid receipt events", a
     assert.equal(eventsBody.count, 3);
     assert.equal(eventsBody.events[0].receipt_id, latestReceiptId);
     assert.equal(eventsBody.events.some((entry) => entry.receipt_id === latestReceiptId), true);
+    assert.equal(eventsBody.events[0].bazaar_extension_status, "missing");
 
     const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/${latestReceiptId}`);
     assert.equal(latestReceipt.status, 200);
@@ -334,6 +339,7 @@ test("public proof endpoints stay consistent with recent paid receipt events", a
     assert.equal(latestReceiptBody.public_proof, true);
     assert.equal(latestReceiptBody.source, "event_feed");
     assert.equal(latestReceiptBody.x402_verified, true);
+    assert.equal(latestReceiptBody.bazaar_extension_status, "missing");
 
     const latestReceiptSerialized = JSON.stringify(latestReceiptBody).toLowerCase();
     assert.equal(latestReceiptSerialized.includes("payment-signature"), false);
