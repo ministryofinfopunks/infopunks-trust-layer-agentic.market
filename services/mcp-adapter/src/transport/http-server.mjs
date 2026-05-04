@@ -28,19 +28,7 @@ const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
   risk_level: "medium",
   route: "allow",
   status: "allow",
-  reasons: ["policy_default"],
-  receipt: {
-    x402_verified: true,
-    facilitator_provider: "cdp",
-    network: "eip155:8453",
-    asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
-    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
-    price: "10000",
-    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
-    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
-    bazaar_extension_status: "pending_external_confirmation",
-    bazaar_extension_reason: "Bazaar metadata is included in the x402 resource extension; external Bazaar acceptance is pending confirmation."
-  }
+  reasons: ["domain_evidence_sparse"]
 };
 const RESOLVE_TRUST_RESPONSE_SCHEMA = {
   type: "object",
