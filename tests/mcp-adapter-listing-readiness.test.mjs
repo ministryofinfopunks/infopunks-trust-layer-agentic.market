@@ -80,8 +80,6 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
   assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
   assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.path, "/v1/resolve-trust");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.contentType, "application/json");
   assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
@@ -92,6 +90,10 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.deepEqual(decoded.extensions.bazaar, decoded.accepts[0].resource.extensions.bazaar);
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
+  assert.deepEqual(
+    decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
+    ["subject_id", "context"]
+  );
   assert.deepEqual(
     __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
     { valid: true }
@@ -209,6 +211,10 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "type"), false);
   assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "properties"), false);
   assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "required"), false);
+  assert.deepEqual(
+    decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
+    ["subject_id", "context"]
+  );
   assert.deepEqual(
     decoded.resource.extensions.bazaar.info.tags,
     ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]

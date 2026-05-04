@@ -30,33 +30,64 @@ const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
   status: "allow",
   reasons: ["domain_evidence_sparse"]
 };
+const RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    subject_id: {
+      type: "string",
+      description: "Agent, wallet, endpoint, or service identifier to resolve trust for."
+    },
+    context: {
+      type: "object",
+      description: "Execution context for the trust decision.",
+      additionalProperties: true
+    }
+  },
+  required: ["subject_id", "context"],
+  additionalProperties: false
+};
 const RESOLVE_TRUST_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
     subject_id: { type: "string" },
     trust_score: { type: "number" },
+    confidence: { type: "number" },
     risk_level: { type: "string" },
     route: { type: "string" },
-    status: { type: "string" }
+    status: { type: "string" },
+    reasons: {
+      type: "array",
+      items: { type: "string" }
+    }
   },
-  required: ["subject_id", "trust_score", "route"]
+  required: ["subject_id", "trust_score", "route"],
+  additionalProperties: true
+};
+const RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    subject_id: { type: "string" },
+    trust_score: { type: "number" },
+    confidence: { type: "number" },
+    risk_level: { type: "string" },
+    route: { type: "string" },
+    status: { type: "string" },
+    reasons: {
+      type: "array",
+      items: { type: "string" }
+    }
+  },
+  required: ["subject_id", "trust_score", "route", "status"],
+  additionalProperties: true
 };
 const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
   const declared = declareDiscoveryExtension({
     input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
-    inputSchema: {
-      type: "object",
-      properties: {
-        subject_id: { type: "string" },
-        context: { type: "object" }
-      },
-      required: ["subject_id"],
-      additionalProperties: false
-    },
+    inputSchema: RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA,
     bodyType: "json",
     output: {
       example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
-      schema: RESOLVE_TRUST_RESPONSE_SCHEMA
+      schema: RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA
     }
   }).bazaar;
   const declaredForRoute = bazaarResourceServerExtension.enrichDeclaration(declared, {
@@ -72,7 +103,6 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
       ...declaredForRoute.info,
       input: {
         ...declaredForRoute.info.input,
-        method: "POST",
         path: "/v1/resolve-trust",
         contentType: "application/json"
       },
@@ -87,10 +117,6 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
           ...declaredForRoute.schema.properties.input,
           properties: {
             ...declaredForRoute.schema.properties.input.properties,
-            method: {
-              type: "string",
-              enum: ["POST"]
-            },
             path: {
               type: "string",
               const: "/v1/resolve-trust"
@@ -102,16 +128,10 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
           },
           required: Array.from(new Set([
             ...(declaredForRoute.schema.properties.input.required ?? []),
-            "method",
             "path",
             "contentType"
           ]))
-        },
-        tags: {
-          type: "array",
-          items: { type: "string" }
-        },
-        category: { type: "string" }
+        }
       }
     }
   };
