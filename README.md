@@ -32,39 +32,27 @@ POST /v1/resolve-trust
 
 Agents call this before routing work, capital, validation, execution, or payment. The response returns a trust score, route decision, confidence, reasons, and an x402-backed public application receipt.
 
-## Proof
+## Live Proof
 
-Proof index:
+Fresh paid receipts are available from the public proof index:
 
 ```text
 https://infopunks-x402-adapter-cdp-staging.onrender.com/proof
 ```
 
-Receipt proof pages:
+Recent paid events:
 
 ```text
-https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/{receipt_id}
+https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/events/recent
 ```
 
-Fresh proof page:
+Receipt lookup template:
 
 ```text
-https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/xrc_9c23e3d1-5abc-4d9f-b41e-635be9e0f1bf
+https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/{receipt_id}
 ```
 
-## Receipts
-
-Public receipt endpoint:
-
-```text
-GET /receipts/{receipt_id}
-```
-
-Fresh receipt:
-
-```text
-https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/xrc_9c23e3d1-5abc-4d9f-b41e-635be9e0f1bf
-```
+Receipt IDs are generated per paid call and may rotate after redeploy while v0 uses in-memory proof storage.
 
 Trust Layer receipts expose public application-level metadata: receipt id, final status, x402 verification status, facilitator provider, network, asset, payTo, resource, result hash, proof URL, settlement status when available, `bazaar_metadata_status`, `external_bazaar_acceptance`, and Bazaar extension diagnostics.
 
