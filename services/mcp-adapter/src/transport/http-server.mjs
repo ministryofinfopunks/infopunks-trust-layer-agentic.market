@@ -8,6 +8,9 @@ import { toMcpToolError } from "../middleware/error-handler.mjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MISSING_EXTENSION_RESPONSES_REASON = "EXTENSION-RESPONSES header not present on CDP verify/settle response";
+const BAZAAR_METADATA_STATUS = "included";
+const EXTERNAL_BAZAAR_ACCEPTANCE_STATUS = "pending_confirmation";
+const BAZAAR_METADATA_PUBLIC_NOTE = "Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation.";
 const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
 const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
 const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
@@ -33,9 +36,10 @@ const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
     asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
     payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
     price: "10000",
-    bazaar_extension_status: "accepted",
-    bazaar_extension_reason: "discovery metadata accepted",
-    bazaar_extension_raw: "{\"extensions\":[{\"name\":\"bazaar\",\"status\":\"accepted\"}]}"
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
+    bazaar_extension_status: "pending_external_confirmation",
+    bazaar_extension_reason: "Bazaar metadata is included in the x402 resource extension; external Bazaar acceptance is pending confirmation."
   }
 };
 const RESOLVE_TRUST_RESPONSE_SCHEMA = {
@@ -139,6 +143,8 @@ const PUBLIC_PROOF_RECEIPTS = {
     final_status: 200,
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: "missing",
     bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
     bazaar_extension_raw: null,
@@ -159,6 +165,8 @@ const PUBLIC_PROOF_RECEIPTS = {
     final_status: 200,
     payment_header_used: "PAYMENT-SIGNATURE",
     public_proof: true,
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: "missing",
     bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
     bazaar_extension_raw: null,
@@ -778,6 +786,8 @@ function resolveBazaarReceiptDiagnostics(receipt = null) {
     : reason;
   const raw = receipt?.bazaar_extension_raw ?? null;
   return {
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: normalizedStatus,
     bazaar_extension_reason: normalizedReason,
     bazaar_extension_raw: raw
@@ -817,6 +827,8 @@ function toResolveTrustV1Response(request, toolOutput, config) {
       payment_receipt_id: toolOutput?.meta?.payment_receipt_id ?? null,
       verifier_reference: receipt?.verifier_reference ?? toolOutput?.meta?.verifier_reference ?? null,
       settlement_status: receipt?.settlement_status ?? null,
+      bazaar_metadata_status: bazaarDiagnostics.bazaar_metadata_status,
+      external_bazaar_acceptance: bazaarDiagnostics.external_bazaar_acceptance,
       bazaar_extension_status: bazaarDiagnostics.bazaar_extension_status,
       bazaar_extension_reason: bazaarDiagnostics.bazaar_extension_reason,
       bazaar_extension_raw: bazaarDiagnostics.bazaar_extension_raw
@@ -856,6 +868,11 @@ function buildInfopunksTrustLayerManifest(config) {
     },
     discoverability: {
       agentic_market_listing: `${origin}/.well-known/infopunks-trust-layer.json`
+    },
+    bazaar: {
+      metadata_status: BAZAAR_METADATA_STATUS,
+      external_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
+      note: BAZAAR_METADATA_PUBLIC_NOTE
     }
   };
 }
@@ -1013,6 +1030,8 @@ function buildOpenApiJson(origin, config) {
                 risk_level: { type: "string" },
                 receipt_id: { type: "string" },
                 reason: { type: "string" },
+                bazaar_metadata_status: { type: "string" },
+                external_bazaar_acceptance: { type: "string" },
                 bazaar_extension_status: { type: "string" },
                 bazaar_extension_reason: { type: "string" },
                 bazaar_extension_raw: { type: "string" }
@@ -1055,6 +1074,8 @@ function buildOpenApiJson(origin, config) {
                 asset: { type: "string" },
                 payTo: { type: "string" },
                 price: { type: "string" },
+                bazaar_metadata_status: { type: "string" },
+                external_bazaar_acceptance: { type: "string" },
                 bazaar_extension_status: { type: "string" },
                 bazaar_extension_reason: { type: "string" },
                 bazaar_extension_raw: { type: "string" }
@@ -1093,6 +1114,8 @@ function sanitizePublicEvent(event = {}) {
     price: event.price ?? null,
     risk_level: event.risk_level ?? null,
     reason: event.reason ?? null,
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: normalizedBazaarStatus,
     bazaar_extension_reason: normalizedBazaarStatus === "missing" && !bazaarReason
       ? MISSING_EXTENSION_RESPONSES_REASON
@@ -1104,6 +1127,8 @@ function sanitizePublicEvent(event = {}) {
 async function resolveReceiptBazaarDiagnostics(mcpServer, receiptId) {
   if (!receiptId || typeof mcpServer?.store?.getReceiptById !== "function") {
     return {
+      bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+      external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
       bazaar_extension_status: "missing",
       bazaar_extension_reason: MISSING_EXTENSION_RESPONSES_REASON,
       bazaar_extension_raw: null
@@ -1115,6 +1140,8 @@ async function resolveReceiptBazaarDiagnostics(mcpServer, receiptId) {
   const normalizedStatus = typeof status === "string" && status.trim() ? status : "missing";
   const reason = metadata?.bazaar_extension_reason ?? null;
   return {
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: normalizedStatus,
     bazaar_extension_reason: normalizedStatus === "missing" && !reason
       ? MISSING_EXTENSION_RESPONSES_REASON
@@ -1257,6 +1284,8 @@ function buildPublicReceiptProof({ receiptId, receipt = null, event = null, base
     payment_header_used: base?.payment_header_used ?? null,
     verifier_reference: receipt?.verifier_reference ?? null,
     receipt_status: receipt?.receipt_status ?? null,
+    bazaar_metadata_status: BAZAAR_METADATA_STATUS,
+    external_bazaar_acceptance: EXTERNAL_BAZAAR_ACCEPTANCE_STATUS,
     bazaar_extension_status: bazaarExtensionStatus,
     bazaar_extension_reason: bazaarExtensionReason,
     bazaar_extension_raw: bazaarExtensionRaw,
@@ -1315,6 +1344,7 @@ function renderProofPage({ latestProof, previousReceiptId }) {
   const lines = [
     "INFOPUNKS TRUST LAYER",
     "PAID CALL VERIFIED",
+    BAZAAR_METADATA_PUBLIC_NOTE,
     "",
     `latest_receipt_id: ${latestProof.receipt_id}`,
     `previous_receipt_id: ${previousReceiptId ?? "unavailable"}`,
@@ -1326,6 +1356,8 @@ function renderProofPage({ latestProof, previousReceiptId }) {
     `chain_id: ${latestProof.network}`,
     `tool: ${latestProof.tool}`,
     `settlement: ${settlement}`,
+    `bazaar_metadata_status: ${latestProof.bazaar_metadata_status ?? BAZAAR_METADATA_STATUS}`,
+    `external_bazaar_acceptance: ${latestProof.external_bazaar_acceptance ?? EXTERNAL_BAZAAR_ACCEPTANCE_STATUS}`,
     `bazaar_extension_status: ${latestProof.bazaar_extension_status ?? "missing"}`
   ];
   if (latestProof.bazaar_extension_reason) {

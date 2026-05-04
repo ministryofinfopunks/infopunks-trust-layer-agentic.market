@@ -199,6 +199,17 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.resource.extensions.bazaar.info.output.type, "json");
   assert.equal(decoded.resource.extensions.bazaar.info.output.example.subject_id, "agent_public_paid_proof");
   assert.equal(decoded.resource.extensions.bazaar.info.output.example.status, "allow");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.receipt.bazaar_metadata_status, "included");
+  assert.equal(decoded.resource.extensions.bazaar.info.output.example.receipt.external_bazaar_acceptance, "pending_confirmation");
+  assert.equal(
+    decoded.resource.extensions.bazaar.info.output.example.receipt.bazaar_extension_status,
+    "pending_external_confirmation"
+  );
+  assert.equal(
+    decoded.resource.extensions.bazaar.info.output.example.receipt.bazaar_extension_reason,
+    "Bazaar metadata is included in the x402 resource extension; external Bazaar acceptance is pending confirmation."
+  );
+  assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example.receipt, "bazaar_extension_raw"), false);
   assert.deepEqual(
     decoded.resource.extensions.bazaar.info.tags,
     ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
