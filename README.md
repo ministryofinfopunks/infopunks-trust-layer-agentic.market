@@ -20,6 +20,12 @@ Public endpoints:
 - `GET /.well-known/infopunks-trust-layer.json`
 - `GET /v1/events/recent`
 
+## Mainnet Proof Archive
+
+Canonical Infopunks v0 proof archive:
+https://github.com/ministryofinfopunks/infopunks-v0-mainnet-proof
+
+
 ## 60-Second Onboarding
 
 ```bash
