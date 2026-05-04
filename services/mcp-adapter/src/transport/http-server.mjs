@@ -12,7 +12,6 @@ const BAZAAR_METADATA_STATUS = "included";
 const EXTERNAL_BAZAAR_ACCEPTANCE_STATUS = "pending_confirmation";
 const BAZAAR_METADATA_PUBLIC_NOTE = "Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation.";
 const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
-const RESOLVE_TRUST_BAZAAR_TAGS = ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"];
 const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
   subject_id: "agent_public_paid_proof",
   context: {
@@ -80,7 +79,7 @@ const RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA = {
   required: ["subject_id", "trust_score", "route", "status"],
   additionalProperties: true
 };
-const RESOLVE_TRUST_BAZAAR_DECLARATION = {
+const resolveTrustDiscoveryDeclaration = declareDiscoveryExtension({
   input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
   inputSchema: RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA,
   bodyType: "json",
@@ -88,54 +87,31 @@ const RESOLVE_TRUST_BAZAAR_DECLARATION = {
     example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
     schema: RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA
   }
-};
+});
+
+function resolveBazaarExtensionObject(extensionLike) {
+  if (
+    extensionLike
+    && typeof extensionLike === "object"
+    && !Array.isArray(extensionLike)
+    && Object.hasOwn(extensionLike, "bazaar")
+    && extensionLike.bazaar
+    && typeof extensionLike.bazaar === "object"
+  ) {
+    return extensionLike.bazaar;
+  }
+  return extensionLike;
+}
+
 const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
-  const declared = declareDiscoveryExtension(RESOLVE_TRUST_BAZAAR_DECLARATION).bazaar;
-  const declaredForRoute = bazaarResourceServerExtension.enrichDeclaration(declared, {
+  const declared = resolveBazaarExtensionObject(resolveTrustDiscoveryDeclaration);
+  const enriched = bazaarResourceServerExtension.enrichDeclaration(declared, {
     method: "POST",
     routePattern: "/v1/resolve-trust",
-    adapter: { getPath: () => "/v1/resolve-trust" }
+    adapter: { getPath: () => "/v1/resolve-trust" },
+    contentType: "application/json"
   });
-
-  return {
-    ...declaredForRoute,
-    routeTemplate: "/v1/resolve-trust",
-    info: {
-      ...declaredForRoute.info,
-      input: {
-        ...declaredForRoute.info.input,
-        path: "/v1/resolve-trust",
-        contentType: "application/json"
-      },
-      tags: RESOLVE_TRUST_BAZAAR_TAGS,
-      category: "infrastructure"
-    },
-    schema: {
-      ...declaredForRoute.schema,
-      properties: {
-        ...declaredForRoute.schema.properties,
-        input: {
-          ...declaredForRoute.schema.properties.input,
-          properties: {
-            ...declaredForRoute.schema.properties.input.properties,
-            path: {
-              type: "string",
-              const: "/v1/resolve-trust"
-            },
-            contentType: {
-              type: "string",
-              const: "application/json"
-            }
-          },
-          required: Array.from(new Set([
-            ...(declaredForRoute.schema.properties.input.required ?? []),
-            "path",
-            "contentType"
-          ]))
-        }
-      }
-    }
-  };
+  return resolveBazaarExtensionObject(enriched);
 })();
 const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
 const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
@@ -473,7 +449,7 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
       }
     ],
     extensions: {
-      bazaar: RESOLVE_TRUST_BAZAAR_DECLARATION
+      bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
     }
   };
 }

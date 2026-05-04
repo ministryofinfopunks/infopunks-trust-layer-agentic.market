@@ -28,6 +28,45 @@ function withEnv(overrides, fn) {
   }
 }
 
+function assertBazaarExtensionConsistency(decoded) {
+  const topLevelBazaar = decoded?.extensions?.bazaar;
+  const resourceBazaar = decoded?.resource?.extensions?.bazaar;
+  const acceptsBazaar = decoded?.accepts?.[0]?.resource?.extensions?.bazaar;
+
+  assert.ok(topLevelBazaar);
+  assert.ok(resourceBazaar);
+  assert.ok(acceptsBazaar);
+  assert.deepEqual(topLevelBazaar, resourceBazaar);
+  assert.deepEqual(resourceBazaar, acceptsBazaar);
+
+  assert.ok(resourceBazaar.info?.input);
+  assert.ok(resourceBazaar.schema?.properties?.input);
+  assert.ok(resourceBazaar.info?.output?.example);
+  assert.equal(resourceBazaar.info?.input?.body?.subject_id, "agent_public_paid_proof");
+  assert.equal(
+    resourceBazaar.schema?.properties?.input?.properties?.body?.properties?.subject_id?.type,
+    "string"
+  );
+
+  const requiredInputKeys = resourceBazaar.schema?.properties?.input?.required ?? [];
+  for (const key of requiredInputKeys) {
+    assert.equal(
+      Object.hasOwn(resourceBazaar.info?.input ?? {}, key),
+      true,
+      `bazaar.info.input is missing required key ${key}`
+    );
+  }
+
+  const requiredBodyKeys = resourceBazaar.schema?.properties?.input?.properties?.body?.required ?? [];
+  for (const key of requiredBodyKeys) {
+    assert.equal(
+      Object.hasOwn(resourceBazaar.info?.input?.body ?? {}, key),
+      true,
+      `bazaar.info.input.body is missing required key ${key}`
+    );
+  }
+}
+
 test("statusFromAdapterErrorCode maps payment errors to 402/409", () => {
   assert.equal(__testOnly.statusFromAdapterErrorCode("ENTITLEMENT_REQUIRED"), 402);
   assert.equal(__testOnly.statusFromAdapterErrorCode("PAYMENT_VERIFICATION_FAILED"), 402);
@@ -76,8 +115,7 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
-  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
   assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
   assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
   assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
@@ -86,19 +124,8 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.accepts[0].resource.extensions.bazaar.info.input.type, "http");
   assert.ok(decoded.extensions?.bazaar);
-  assert.equal(decoded.extensions.bazaar.bodyType, "json");
-  assert.equal(decoded.extensions.bazaar.input?.subject_id, "agent_public_paid_proof");
-  assert.equal(decoded.extensions.bazaar.input?.context?.action, "execute_task");
-  assert.deepEqual(decoded.extensions.bazaar.inputSchema?.required, ["subject_id", "context"]);
-  assert.equal(typeof decoded.extensions.bazaar.output?.example, "object");
-  assert.equal(Array.isArray(decoded.extensions.bazaar.output?.example), false);
-  assert.equal(decoded.extensions.bazaar.output?.example?.subject_id, "agent_public_paid_proof");
-  assert.equal(typeof decoded.extensions.bazaar.output?.example?.trust_score, "number");
-  assert.equal(decoded.extensions.bazaar.output?.example?.route, "allow");
-  assert.equal(decoded.extensions.bazaar.output?.example?.status, "allow");
-  assert.equal(decoded.extensions.bazaar?.info?.input?.type, undefined);
-  assert.equal(decoded.extensions.bazaar?.schema?.properties?.input?.properties?.method, undefined);
-  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
+  assert.equal(decoded.extensions.bazaar.info.input.type, "http");
+  assert.equal(decoded.extensions.bazaar.schema.properties.input.properties.method.type, "string");
   assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
   assert.deepEqual(
     decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
@@ -115,6 +142,7 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
     ),
     []
   );
+  assertBazaarExtensionConsistency(decoded);
   assert.ok(decoded.resource.inputSchema);
   assert.ok(decoded.resource.outputSchema);
   assert.deepEqual(decoded.resource.outputSchema.required, ["subject_id", "trust_score", "route"]);
@@ -194,19 +222,13 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
-  assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
+  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
   assert.ok(decoded.extensions?.bazaar);
-  assert.equal(decoded.extensions.bazaar.bodyType, "json");
-  assert.equal(decoded.extensions.bazaar.input?.subject_id, "agent_public_paid_proof");
-  assert.deepEqual(decoded.extensions.bazaar.inputSchema?.required, ["subject_id", "context"]);
-  assert.equal(decoded.extensions.bazaar?.info?.input?.type, undefined);
-  assert.equal(decoded.extensions.bazaar?.schema?.properties?.input?.properties?.method, undefined);
+  assert.equal(decoded.extensions.bazaar.info.input.bodyType, "json");
+  assert.equal(decoded.extensions.bazaar.info.input.body?.subject_id, "agent_public_paid_proof");
   assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
     type: "http",
     method: "POST",
-    path: "/v1/resolve-trust",
-    contentType: "application/json",
     bodyType: "json",
     body: {
       subject_id: "agent_public_paid_proof",
@@ -231,11 +253,6 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
     decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
     ["subject_id", "context"]
   );
-  assert.deepEqual(
-    decoded.resource.extensions.bazaar.info.tags,
-    ["trust", "reputation", "routing", "agent-security", "x402", "ai-agents", "risk", "coordination"]
-  );
-  assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.deepEqual(
     __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
@@ -255,6 +272,7 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
     ),
     []
   );
+  assertBazaarExtensionConsistency(decoded);
 });
 
 test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
