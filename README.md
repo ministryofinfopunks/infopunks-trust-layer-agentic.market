@@ -66,7 +66,7 @@ Fresh receipt:
 https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/xrc_41855125-159b-4563-82a9-91e05bdfe6cb
 ```
 
-Trust Layer receipts expose public application-level metadata: receipt id, final status, x402 verification status, facilitator provider, network, asset, payTo, resource, result hash, proof URL, and settlement status when available.
+Trust Layer receipts expose public application-level metadata: receipt id, final status, x402 verification status, facilitator provider, network, asset, payTo, resource, result hash, proof URL, settlement status when available, `bazaar_metadata_status`, `external_bazaar_acceptance`, and Bazaar extension diagnostics.
 
 ## x402 / Base Configuration
 
@@ -91,7 +91,7 @@ Infopunks discovery manifest:
 https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json
 ```
 
-The discovery metadata advertises the paid trust resource, route template, Base network configuration, accepted asset, and Bazaar-compatible extension metadata.
+Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation.
 
 ## OpenAPI
 

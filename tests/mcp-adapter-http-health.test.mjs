@@ -97,6 +97,12 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(trustLayer.status, 200);
     const trustLayerBody = await trustLayer.json();
     assert.equal(trustLayerBody.endpoints.resolve_trust.endsWith("/v1/resolve-trust"), true);
+    assert.equal(trustLayerBody?.bazaar?.metadata_status, "included");
+    assert.equal(trustLayerBody?.bazaar?.external_acceptance, "pending_confirmation");
+    assert.equal(
+      trustLayerBody?.bazaar?.note,
+      "Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation."
+    );
     assert.equal(upstreamHealthCalls, 0);
 
     const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
@@ -113,6 +119,12 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(proofText.includes("PAID CALL VERIFIED"), true);
     assert.equal(proofText.includes("latest_receipt_id: xrc_735986e0-fe0c-4214-8e72-add8093958ca"), true);
     assert.equal(proofText.includes("previous_receipt_id: xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e"), true);
+    assert.equal(
+      proofText.includes("Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation."),
+      true
+    );
+    assert.equal(proofText.includes("bazaar_metadata_status: included"), true);
+    assert.equal(proofText.includes("external_bazaar_acceptance: pending_confirmation"), true);
     assert.equal(proofText.includes("bazaar_extension_status: missing"), true);
 
     const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/xrc_735986e0-fe0c-4214-8e72-add8093958ca`);
@@ -128,6 +140,8 @@ test("/health is unconditional and does not depend on upstream readiness", async
     assert.equal(latestReceiptBody.payTo, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
     assert.equal(latestReceiptBody.final_status, 200);
     assert.equal(latestReceiptBody.payment_header_used, "PAYMENT-SIGNATURE");
+    assert.equal(latestReceiptBody.bazaar_metadata_status, "included");
+    assert.equal(latestReceiptBody.external_bazaar_acceptance, "pending_confirmation");
     assert.equal(latestReceiptBody.bazaar_extension_status, "missing");
     assert.equal(
       latestReceiptBody.bazaar_extension_reason,
@@ -328,6 +342,8 @@ test("public proof endpoints stay consistent with recent paid receipt events", a
     assert.equal(eventsBody.count, 3);
     assert.equal(eventsBody.events[0].receipt_id, latestReceiptId);
     assert.equal(eventsBody.events.some((entry) => entry.receipt_id === latestReceiptId), true);
+    assert.equal(eventsBody.events[0].bazaar_metadata_status, "included");
+    assert.equal(eventsBody.events[0].external_bazaar_acceptance, "pending_confirmation");
     assert.equal(eventsBody.events[0].bazaar_extension_status, "missing");
 
     const latestReceipt = await fetch(`http://127.0.0.1:${port}/receipts/${latestReceiptId}`);
@@ -342,6 +358,8 @@ test("public proof endpoints stay consistent with recent paid receipt events", a
     assert.equal(latestReceiptBody.public_proof, true);
     assert.equal(latestReceiptBody.source, "event_feed");
     assert.equal(latestReceiptBody.x402_verified, true);
+    assert.equal(latestReceiptBody.bazaar_metadata_status, "included");
+    assert.equal(latestReceiptBody.external_bazaar_acceptance, "pending_confirmation");
     assert.equal(latestReceiptBody.bazaar_extension_status, "missing");
 
     const latestReceiptSerialized = JSON.stringify(latestReceiptBody).toLowerCase();

@@ -162,6 +162,16 @@ paths:
                           type: string
                         reason:
                           type: string
+                        bazaar_metadata_status:
+                          type: string
+                        external_bazaar_acceptance:
+                          type: string
+                        bazaar_extension_status:
+                          type: string
+                        bazaar_extension_reason:
+                          type: string
+                        bazaar_extension_raw:
+                          type: string
                 required: [count, events]
 components:
   schemas:
@@ -215,6 +225,16 @@ components:
             verifier_reference:
               type: string
             settlement_status:
+              type: string
+            bazaar_metadata_status:
+              type: string
+            external_bazaar_acceptance:
+              type: string
+            bazaar_extension_status:
+              type: string
+            bazaar_extension_reason:
+              type: string
+            bazaar_extension_raw:
               type: string
           required: [x402_verified]
       required: [subject_id, trust_score, risk_level, confidence, route, reasons, receipt]
