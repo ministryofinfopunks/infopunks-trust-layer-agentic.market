@@ -1340,7 +1340,22 @@ async function resolveProofPageState(mcpServer) {
 }
 
 function renderProofPage({ latestProof, previousReceiptId }) {
+  const escapeHtml = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+
+  const facilitator = String(latestProof.facilitator_provider ?? "").toUpperCase();
+  const network = latestProof.chain ?? latestProof.network ?? "unknown";
+  const chainId = latestProof.network;
   const settlement = latestProof.settlement_status ?? "unknown";
+  const bazaarMetadataStatus = latestProof.bazaar_metadata_status ?? BAZAAR_METADATA_STATUS;
+  const externalBazaarAcceptance = latestProof.external_bazaar_acceptance ?? EXTERNAL_BAZAAR_ACCEPTANCE_STATUS;
+  const bazaarExtensionStatus = latestProof.bazaar_extension_status ?? "missing";
+  const bazaarExtensionReason = latestProof.bazaar_extension_reason ?? "unavailable";
+
   const lines = [
     "INFOPUNKS TRUST LAYER",
     "PAID CALL VERIFIED",
@@ -1351,25 +1366,162 @@ function renderProofPage({ latestProof, previousReceiptId }) {
     "",
     `receipt_id: ${latestProof.receipt_id}`,
     `status: ${latestProof.status}`,
-    `facilitator: ${String(latestProof.facilitator_provider ?? "").toUpperCase()}`,
-    `network: ${latestProof.chain ?? latestProof.network ?? "unknown"}`,
-    `chain_id: ${latestProof.network}`,
+    `facilitator: ${facilitator}`,
+    `network: ${network}`,
+    `chain_id: ${chainId}`,
     `tool: ${latestProof.tool}`,
     `settlement: ${settlement}`,
-    `bazaar_metadata_status: ${latestProof.bazaar_metadata_status ?? BAZAAR_METADATA_STATUS}`,
-    `external_bazaar_acceptance: ${latestProof.external_bazaar_acceptance ?? EXTERNAL_BAZAAR_ACCEPTANCE_STATUS}`,
-    `bazaar_extension_status: ${latestProof.bazaar_extension_status ?? "missing"}`
+    `bazaar_metadata_status: ${bazaarMetadataStatus}`,
+    `external_bazaar_acceptance: ${externalBazaarAcceptance}`,
+    `bazaar_extension_status: ${bazaarExtensionStatus}`,
+    `bazaar_extension_reason: ${bazaarExtensionReason}`
   ];
-  if (latestProof.bazaar_extension_reason) {
-    lines.push(`bazaar_extension_reason: ${latestProof.bazaar_extension_reason}`);
-  }
   if (latestProof.tx_hash) {
     lines.push(`tx_hash: ${latestProof.tx_hash}`);
   }
   if (latestProof.block_explorer_url) {
     lines.push(`explorer: ${latestProof.block_explorer_url}`);
   }
-  return `${lines.join("\n")}\n`;
+
+  const rawProof = `${lines.join("\n")}\n`;
+  const row = (label, value) => `<div class="row"><span class="label">${escapeHtml(label)}</span><span class="value">${escapeHtml(value)}</span></div>`;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Infopunks Trust Layer Proof</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top, #11151c 0%, #05070a 66%);
+        color: #d9e4f1;
+        font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      main { max-width: 900px; margin: 0 auto; padding: 36px 20px 56px; }
+      .terminal {
+        border: 1px solid #253241;
+        border-radius: 16px;
+        overflow: hidden;
+        background: rgba(7, 10, 14, 0.92);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #1a2430;
+        background: #0c1218;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #ff5f57;
+        box-shadow: 18px 0 0 #febc2e, 36px 0 0 #28c840;
+      }
+      .screen { padding: 22px 18px 20px; }
+      .bootline {
+        margin: 0 0 8px;
+        color: #8aa0b7;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 12px;
+      }
+      .status {
+        margin: 0 0 6px;
+        color: #7ee787;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+      }
+      h1 { margin: 0 0 10px; font-size: 24px; }
+      .subtle { margin: 0 0 16px; color: #8aa0b7; }
+      .cards { display: grid; gap: 12px; }
+      .card {
+        border: 1px solid #1d2936;
+        border-radius: 12px;
+        background: #0b1117;
+        padding: 14px 14px 12px;
+      }
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #9eb3c7;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 10px;
+        padding: 6px 0;
+        border-top: 1px solid #101923;
+      }
+      .row:first-of-type { border-top: 0; padding-top: 0; }
+      .label {
+        color: #8aa0b7;
+        text-transform: lowercase;
+      }
+      .value { word-break: break-word; color: #d9e4f1; }
+      .raw {
+        margin: 14px 0 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #090e13;
+        border: 1px solid #18222d;
+        border-radius: 10px;
+        padding: 12px;
+        color: #b8c8da;
+      }
+      @media (max-width: 640px) {
+        .row { grid-template-columns: 1fr; gap: 2px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="terminal">
+        <div class="topbar"><span class="dot" aria-hidden="true"></span></div>
+        <div class="screen">
+          <p class="bootline">INFOPUNKS TRUST LAYER</p>
+          <p class="status">PAID CALL VERIFIED</p>
+          <h1>Infopunks Trust Layer Proof</h1>
+          <p class="subtle">${escapeHtml(BAZAAR_METADATA_PUBLIC_NOTE)}</p>
+          <div class="cards">
+            <section class="card">
+              <h2>service summary</h2>
+              ${row("status", String(latestProof.status))}
+              ${row("facilitator", facilitator)}
+              ${row("network", network)}
+              ${row("chain_id", chainId)}
+              ${row("tool", String(latestProof.tool))}
+              ${row("settlement", settlement)}
+            </section>
+            <section class="card">
+              <h2>latest receipt</h2>
+              ${row("latest_receipt_id", String(latestProof.receipt_id))}
+              ${row("previous_receipt_id", String(previousReceiptId ?? "unavailable"))}
+              ${row("receipt_id", String(latestProof.receipt_id))}
+            </section>
+            <section class="card">
+              <h2>bazaar diagnostics</h2>
+              ${row("bazaar_metadata_status", bazaarMetadataStatus)}
+              ${row("external_bazaar_acceptance", externalBazaarAcceptance)}
+              ${row("bazaar_extension_status", bazaarExtensionStatus)}
+              ${row("bazaar_extension_reason", bazaarExtensionReason)}
+            </section>
+          </div>
+          <pre class="raw">${escapeHtml(rawProof)}</pre>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>`;
 }
 
 function statusFromAdapterErrorCode(code, fallback = 500) {
@@ -1450,7 +1602,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           latestProof,
           previousReceiptId
         }),
-        corsHeaders()
+        {
+          ...corsHeaders(),
+          "content-type": "text/html; charset=utf-8"
+        }
       );
       return;
     }
