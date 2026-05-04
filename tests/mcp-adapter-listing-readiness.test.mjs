@@ -87,6 +87,9 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
   assert.equal(decoded.accepts[0].resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.accepts[0].resource.extensions.bazaar.info.input.type, "http");
+  assert.ok(decoded.extensions?.bazaar);
+  assert.deepEqual(decoded.extensions.bazaar, decoded.resource.extensions.bazaar);
+  assert.deepEqual(decoded.extensions.bazaar, decoded.accepts[0].resource.extensions.bazaar);
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
   assert.deepEqual(

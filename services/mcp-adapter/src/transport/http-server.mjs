@@ -1,6 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
+import { bazaarResourceServerExtension, declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
 import { createAdapterTraceId } from "../observability/tracing.mjs";
@@ -71,14 +71,19 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
       schema: RESOLVE_TRUST_RESPONSE_SCHEMA
     }
   }).bazaar;
+  const declaredForRoute = bazaarResourceServerExtension.enrichDeclaration(declared, {
+    method: "POST",
+    routePattern: "/v1/resolve-trust",
+    adapter: { getPath: () => "/v1/resolve-trust" }
+  });
 
   return {
-    ...declared,
+    ...declaredForRoute,
     routeTemplate: "/v1/resolve-trust",
     info: {
-      ...declared.info,
+      ...declaredForRoute.info,
       input: {
-        ...declared.info.input,
+        ...declaredForRoute.info.input,
         method: "POST",
         path: "/v1/resolve-trust",
         contentType: "application/json"
@@ -87,13 +92,13 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
       category: "infrastructure"
     },
     schema: {
-      ...declared.schema,
+      ...declaredForRoute.schema,
       properties: {
-        ...declared.schema.properties,
+        ...declaredForRoute.schema.properties,
         input: {
-          ...declared.schema.properties.input,
+          ...declaredForRoute.schema.properties.input,
           properties: {
-            ...declared.schema.properties.input.properties,
+            ...declaredForRoute.schema.properties.input.properties,
             method: {
               type: "string",
               enum: ["POST"]
@@ -108,7 +113,7 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
             }
           },
           required: Array.from(new Set([
-            ...(declared.schema.properties.input.required ?? []),
+            ...(declaredForRoute.schema.properties.input.required ?? []),
             "method",
             "path",
             "contentType"
@@ -442,6 +447,7 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   }
 
   const resource = routeResourceMetadata(config, toolDef, resourcePath);
+  const bazaar = resource?.extensions?.bazaar;
   return {
     x402Version: 2,
     error: "Payment required",
@@ -457,7 +463,8 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
         resource,
         ...(Object.keys(extra).length > 0 ? { extra } : {})
       }
-    ]
+    ],
+    ...(bazaar ? { extensions: { bazaar } } : {})
   };
 }
 
@@ -483,7 +490,8 @@ function hasBazaarExtensionInResource(resource) {
 }
 
 function hasBazaarExtensionInChallenge(paymentRequired = null) {
-  return hasBazaarExtensionInResource(paymentRequired?.resource)
+  return Boolean(paymentRequired?.extensions?.bazaar)
+    || hasBazaarExtensionInResource(paymentRequired?.resource)
     || hasBazaarExtensionInResource(paymentRequired?.accepts?.[0]?.resource);
 }
 
