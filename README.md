@@ -1,155 +1,220 @@
 # Infopunks Trust Layer
 
-Infopunks Trust Layer is one paid trust primitive for Agentic.Market.
+An x402-paid trust resolution primitive for agents on Base.
 
-Agents call it before routing work, capital, validation, execution, or payment:
+## Live Service
 
-`POST /v1/resolve-trust`
+Base URL:
 
-The response returns a trust score, route, reasons, confidence, and x402 receipt. It is a developer-native preflight check: pay once, resolve trust, then decide whether to allow, degrade, or block the next action.
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com
+```
 
-## What It Is
+Health:
 
-Single paid endpoint:
-- `POST /v1/resolve-trust`
+```text
+GET /health
+```
 
-Public endpoints:
+Public event feed:
 
-- `GET /health`
-- `GET /openapi.json`
-- `GET /.well-known/infopunks-trust-layer.json`
-- `GET /v1/events/recent`
+```text
+GET /v1/events/recent
+```
 
-## Mainnet Proof Archive
+## Paid Resources
 
-Canonical Infopunks v0 proof archive:
-https://github.com/ministryofinfopunks/infopunks-v0-mainnet-proof
+The Trust Layer exposes one paid resource:
 
+```text
+POST /v1/resolve-trust
+```
 
-## 60-Second Onboarding
+Agents call this before routing work, capital, validation, execution, or payment. The response returns a trust score, route decision, confidence, reasons, and an x402-backed public application receipt.
+
+## Proof
+
+Proof index:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/proof
+```
+
+Receipt proof pages:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/{receipt_id}
+```
+
+Fresh proof page:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/xrc_41855125-159b-4563-82a9-91e05bdfe6cb
+```
+
+## Receipts
+
+Public receipt endpoint:
+
+```text
+GET /receipts/{receipt_id}
+```
+
+Fresh receipt:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/xrc_41855125-159b-4563-82a9-91e05bdfe6cb
+```
+
+Trust Layer receipts expose public application-level metadata: receipt id, final status, x402 verification status, facilitator provider, network, asset, payTo, resource, result hash, proof URL, and settlement status when available.
+
+## x402 / Base Configuration
+
+Current public configuration:
+
+```text
+Facilitator: CDP x402
+Network: Base mainnet
+Network CAIP-2: eip155:8453
+Asset: USDC
+Payment scheme: exact
+Paid resource: /v1/resolve-trust
+```
+
+The service returns a `402 Payment Required` challenge when `/v1/resolve-trust` is called without a valid x402 payment header. A successful paid call returns `200` and includes a public application receipt.
+
+## Discovery
+
+Infopunks discovery manifest:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json
+```
+
+The discovery metadata advertises the paid trust resource, route template, Base network configuration, accepted asset, and Bazaar-compatible extension metadata.
+
+## OpenAPI
+
+OpenAPI contract:
+
+```text
+https://infopunks-x402-adapter-cdp-staging.onrender.com/openapi.json
+```
+
+The OpenAPI document includes the public contract for:
+
+```text
+/v1/resolve-trust
+/receipts/{receipt_id}
+/v1/events/recent
+/proof
+```
+
+## Example Paid Call
+
+Example paid request shape:
+
+```bash
+curl -i 'https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust' \
+  -X POST \
+  -H 'content-type: application/json' \
+  -H 'x-payment: <x402-payment-payload>' \
+  -d '{
+    "subject_id": "agent_221",
+    "context": {
+      "task_type": "marketplace_routing",
+      "domain": "general",
+      "risk_level": "medium"
+    }
+  }'
+```
+
+Expected paid result:
+
+```text
+HTTP 200
+```
+
+The response includes trust output and a receipt object.
+
+## Local Development
+
+Install dependencies:
 
 ```bash
 npm install
-npm start
 ```
 
-Service default: `http://localhost:4021`
-Staging deployment: `https://infopunks-x402-adapter-cdp-staging.onrender.com`
-
-Run launch checks:
+Run the service locally:
 
 ```bash
-npm run smoke
+npm run dev
+```
+
+Build and test:
+
+```bash
 npm run build
+npm test
 ```
 
-Hosted checks:
-
-These staging commands target the controlled CDP facilitator deployment used before mainnet/public launch.
+Run readiness and x402 smoke checks:
 
 ```bash
-curl https://infopunks-x402-adapter-cdp-staging.onrender.com/health
-curl https://infopunks-x402-adapter-cdp-staging.onrender.com/.well-known/infopunks-trust-layer.json
-curl https://infopunks-x402-adapter-cdp-staging.onrender.com/openapi.json
+npm run readiness
+npm run smoke:x402:cdp
+npm run audit:bazaar
 ```
 
-## curl Example
+Local development may use local or mock verifier settings. Public proof deployments should use CDP x402 on Base mainnet.
 
-Unpaid call (expected `402`):
+## Environment Variables
 
-```bash
-curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
-  -X POST \
-  -H 'content-type: application/json' \
-  -d '{
-    "subject_id": "agent_221",
-    "context": {
-      "task_type": "marketplace_routing",
-      "domain": "general",
-      "risk_level": "medium"
-    }
-  }'
+Core runtime:
+
+```text
+INFOPUNKS_ENVIRONMENT
+INFOPUNKS_CORE_BASE_URL
+INFOPUNKS_BACKEND_URL
+MCP_ADAPTER_PUBLIC_URL
+MCP_ADAPTER_PORT
+MCP_ADAPTER_HOST
+MCP_ADAPTER_ADMIN_TOKEN
+INFOPUNKS_INTERNAL_SERVICE_TOKEN
 ```
 
-Paid retry (expected `200`):
+x402 and Base configuration:
 
-```bash
-curl -i https://infopunks-x402-adapter-cdp-staging.onrender.com/v1/resolve-trust \
-  -X POST \
-  -H 'content-type: application/json' \
-  -H "x-payment: <base64-x402-payment-payload>" \
-  -d '{
-    "subject_id": "agent_221",
-    "context": {
-      "task_type": "marketplace_routing",
-      "domain": "general",
-      "risk_level": "medium"
-    }
-  }'
+```text
+X402_FACILITATOR_PROVIDER
+X402_NETWORK
+X402_ASSET
+X402_PRICE_USD
+X402_PRICE
+ALLOW_TESTNET
+CDP_API_KEY_ID
+CDP_API_KEY_SECRET
 ```
 
-## Expected Response
+Settlement and storage configuration:
 
-On paid success (`200`), response shape:
-
-```json
-{
-  "subject_id": "agent_221",
-  "trust_score": 67,
-  "risk_level": "medium",
-  "confidence": 0.79,
-  "route": "degrade",
-  "reasons": ["recent_validator_reversal"],
-  "receipt": {
-    "x402_verified": true,
-    "network": "eip155:8453",
-    "asset": "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
-    "payment_receipt_id": "xrc_...",
-    "verifier_reference": "vr_...",
-    "settlement_status": "provisional"
-  }
-}
+```text
+X402_SETTLEMENT_WEBHOOK_HMAC_SECRET
+X402_SETTLEMENT_WEBHOOK_SECRET
+INFOPUNKS_MCP_IDENTITY_MAP_DRIVER
+INFOPUNKS_MCP_IDENTITY_MAP_DATABASE_URL
+MCP_ADAPTER_RATE_LIMIT_DRIVER
+MCP_ADAPTER_RATE_LIMIT_POSTGRES_URL
 ```
 
-## Why It Matters
+## Status
 
-- Enforces paid access for trust resolution (`402` when unpaid).
-- Returns a verified trust decision in one call.
-- Produces a receipt id you can audit in billing and settlement flows.
+Phase 1: Trust + Proof is confirmed as a v0 mainnet proof.
 
-## Event Feed And Proof Artifacts
+Fresh paid receipt:
 
-Generate launch artifacts:
+`xrc_41855125-159b-4563-82a9-91e05bdfe6cb`
 
-```bash
-npm run proof
-```
+The service verifies x402 payment through CDP on Base mainnet and returns a public application receipt for `/v1/resolve-trust`.
 
-Generate public testnet proof against deployed URL:
-
-```bash
-PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
-npm run smoke:public:testnet
-
-PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
-X_PAYMENT_B64=<base64-x402-payment-payload> \
-npm run smoke:public:testnet
-
-PUBLIC_BASE_URL=https://infopunks-x402-adapter-cdp-staging.onrender.com \
-X_PAYMENT_B64=<base64-x402-payment-payload> \
-npm run proof:public:testnet
-```
-
-Read recent payment events:
-
-```bash
-npm run event-feed
-```
-
-## Environment Matrix
-
-| Environment | Network | Asset | Verifier | Use |
-|---|---|---|---|---|
-| local | Base Sepolia/mock | USDC | local facilitator | CI/dev |
-| testnet | Base Sepolia | USDC | real facilitator | controlled launch |
-| production | Base mainnet | USDC | real facilitator | public launch |
+Note: current Trust Layer receipts are application-level public receipts with settlement marked provisional unless a transaction hash is available.
