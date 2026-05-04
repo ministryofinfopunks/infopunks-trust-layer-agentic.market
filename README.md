@@ -49,7 +49,7 @@ https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/{receipt_id}
 Fresh proof page:
 
 ```text
-https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/xrc_41855125-159b-4563-82a9-91e05bdfe6cb
+https://infopunks-x402-adapter-cdp-staging.onrender.com/proof/xrc_9c23e3d1-5abc-4d9f-b41e-635be9e0f1bf
 ```
 
 ## Receipts
@@ -63,7 +63,7 @@ GET /receipts/{receipt_id}
 Fresh receipt:
 
 ```text
-https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/xrc_41855125-159b-4563-82a9-91e05bdfe6cb
+https://infopunks-x402-adapter-cdp-staging.onrender.com/receipts/xrc_9c23e3d1-5abc-4d9f-b41e-635be9e0f1bf
 ```
 
 Trust Layer receipts expose public application-level metadata: receipt id, final status, x402 verification status, facilitator provider, network, asset, payTo, resource, result hash, proof URL, settlement status when available, `bazaar_metadata_status`, `external_bazaar_acceptance`, and Bazaar extension diagnostics.
@@ -213,7 +213,7 @@ Phase 1: Trust + Proof is confirmed as a v0 mainnet proof.
 
 Fresh paid receipt:
 
-`xrc_41855125-159b-4563-82a9-91e05bdfe6cb`
+`xrc_9c23e3d1-5abc-4d9f-b41e-635be9e0f1bf`
 
 The service verifies x402 payment through CDP on Base mainnet and returns a public application receipt for `/v1/resolve-trust`.
 
