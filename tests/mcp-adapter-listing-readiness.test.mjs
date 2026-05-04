@@ -86,8 +86,18 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.accepts[0].resource.extensions.bazaar.info.input.type, "http");
   assert.ok(decoded.extensions?.bazaar);
-  assert.deepEqual(decoded.extensions.bazaar, decoded.resource.extensions.bazaar);
-  assert.deepEqual(decoded.extensions.bazaar, decoded.accepts[0].resource.extensions.bazaar);
+  assert.equal(decoded.extensions.bazaar.bodyType, "json");
+  assert.equal(decoded.extensions.bazaar.input?.subject_id, "agent_public_paid_proof");
+  assert.equal(decoded.extensions.bazaar.input?.context?.action, "execute_task");
+  assert.deepEqual(decoded.extensions.bazaar.inputSchema?.required, ["subject_id", "context"]);
+  assert.equal(typeof decoded.extensions.bazaar.output?.example, "object");
+  assert.equal(Array.isArray(decoded.extensions.bazaar.output?.example), false);
+  assert.equal(decoded.extensions.bazaar.output?.example?.subject_id, "agent_public_paid_proof");
+  assert.equal(typeof decoded.extensions.bazaar.output?.example?.trust_score, "number");
+  assert.equal(decoded.extensions.bazaar.output?.example?.route, "allow");
+  assert.equal(decoded.extensions.bazaar.output?.example?.status, "allow");
+  assert.equal(decoded.extensions.bazaar?.info?.input?.type, undefined);
+  assert.equal(decoded.extensions.bazaar?.schema?.properties?.input?.properties?.method, undefined);
   assert.equal(decoded.resource.extensions.bazaar.info.category, "infrastructure");
   assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
   assert.deepEqual(
@@ -186,6 +196,12 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.resource.mimeType, "application/json");
   assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "routeTemplate", "schema"]);
   assert.equal(decoded.resource.extensions.bazaar.routeTemplate, "/v1/resolve-trust");
+  assert.ok(decoded.extensions?.bazaar);
+  assert.equal(decoded.extensions.bazaar.bodyType, "json");
+  assert.equal(decoded.extensions.bazaar.input?.subject_id, "agent_public_paid_proof");
+  assert.deepEqual(decoded.extensions.bazaar.inputSchema?.required, ["subject_id", "context"]);
+  assert.equal(decoded.extensions.bazaar?.info?.input?.type, undefined);
+  assert.equal(decoded.extensions.bazaar?.schema?.properties?.input?.properties?.method, undefined);
   assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
     type: "http",
     method: "POST",

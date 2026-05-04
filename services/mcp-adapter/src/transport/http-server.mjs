@@ -80,16 +80,17 @@ const RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA = {
   required: ["subject_id", "trust_score", "route", "status"],
   additionalProperties: true
 };
+const RESOLVE_TRUST_BAZAAR_DECLARATION = {
+  input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
+  inputSchema: RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA,
+  bodyType: "json",
+  output: {
+    example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
+    schema: RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA
+  }
+};
 const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
-  const declared = declareDiscoveryExtension({
-    input: RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE,
-    inputSchema: RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA,
-    bodyType: "json",
-    output: {
-      example: RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE,
-      schema: RESOLVE_TRUST_BAZAAR_OUTPUT_SCHEMA
-    }
-  }).bazaar;
+  const declared = declareDiscoveryExtension(RESOLVE_TRUST_BAZAAR_DECLARATION).bazaar;
   const declaredForRoute = bazaarResourceServerExtension.enrichDeclaration(declared, {
     method: "POST",
     routePattern: "/v1/resolve-trust",
@@ -455,7 +456,6 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   }
 
   const resource = routeResourceMetadata(config, toolDef, resourcePath);
-  const bazaar = resource?.extensions?.bazaar;
   return {
     x402Version: 2,
     error: "Payment required",
@@ -472,7 +472,9 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
         ...(Object.keys(extra).length > 0 ? { extra } : {})
       }
     ],
-    ...(bazaar ? { extensions: { bazaar } } : {})
+    extensions: {
+      bazaar: RESOLVE_TRUST_BAZAAR_DECLARATION
+    }
   };
 }
 
