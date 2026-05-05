@@ -234,10 +234,13 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
     accepted_amount_matches_verify_price: compareOptionalStrings(paymentAcceptedAmount, verifyPrice),
     accepted_maxAmountRequired_matches_verify_price: compareOptionalStrings(paymentAcceptedMaxAmountRequired, verifyPrice),
     cdp_payment_payload_keys: arrayOfStrings(verifierDetails?.cdp_payment_payload_keys),
-    cdp_payment_payload_has_scheme: boolOrNull(verifierDetails?.cdp_payment_payload_has_scheme),
-    cdp_payment_payload_scheme: toStringOrNull(verifierDetails?.cdp_payment_payload_scheme),
-    cdp_payment_payload_network: toStringOrNull(verifierDetails?.cdp_payment_payload_network),
-    cdp_payment_payload_stripped_wrapper_fields: boolOrNull(verifierDetails?.cdp_payment_payload_stripped_wrapper_fields),
+    cdp_payment_payload_has_accepted: boolOrNull(verifierDetails?.cdp_payment_payload_has_accepted),
+    cdp_payment_payload_has_payload: boolOrNull(verifierDetails?.cdp_payment_payload_has_payload),
+    cdp_payment_payload_has_resource: boolOrNull(verifierDetails?.cdp_payment_payload_has_resource),
+    cdp_payment_payload_resource_type: toStringOrNull(verifierDetails?.cdp_payment_payload_resource_type),
+    cdp_payment_payload_accepted_keys: arrayOfStrings(verifierDetails?.cdp_payment_payload_accepted_keys),
+    cdp_payment_payload_accepted_has_amount: boolOrNull(verifierDetails?.cdp_payment_payload_accepted_has_amount),
+    cdp_payment_payload_accepted_has_maxAmountRequired: boolOrNull(verifierDetails?.cdp_payment_payload_accepted_has_maxAmountRequired),
     cdp_payment_payload_source: toStringOrNull(verifierDetails?.cdp_payment_payload_source),
     facilitator_provider: toStringOrNull(
       verifierDetails?.facilitator_provider

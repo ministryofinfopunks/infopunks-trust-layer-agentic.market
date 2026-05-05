@@ -120,44 +120,96 @@ function toNonEmptyString(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function toObjectOrNull(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function normalizeCdpAccepted({ paymentPayload, paymentRequirements }) {
+  const acceptedFromPayload = toObjectOrNull(paymentPayload?.accepted) ?? {};
+  const requirements = toObjectOrNull(paymentRequirements) ?? {};
+  const merged = { ...acceptedFromPayload };
+  const keysToCarry = [
+    "scheme",
+    "network",
+    "asset",
+    "amount",
+    "payTo",
+    "maxTimeoutSeconds",
+    "extra"
+  ];
+  for (const key of keysToCarry) {
+    if (merged[key] == null && requirements[key] != null) {
+      merged[key] = requirements[key];
+    }
+  }
+  if (merged.amount == null && merged.maxAmountRequired != null) {
+    merged.amount = merged.maxAmountRequired;
+  }
+  if (merged.amount == null && requirements.maxAmountRequired != null) {
+    merged.amount = requirements.maxAmountRequired;
+  }
+  if (merged.amount == null && requirements.amount != null) {
+    merged.amount = requirements.amount;
+  }
+  if (Object.hasOwn(merged, "maxAmountRequired")) {
+    delete merged.maxAmountRequired;
+  }
+  return merged;
+}
+
+function normalizeCdpResource({ paymentPayload, paymentRequirements }) {
+  const resourceFromPayload = paymentPayload?.resource;
+  const requirements = toObjectOrNull(paymentRequirements) ?? {};
+  const requirementResource = requirements.resource;
+  const urlFromPayloadObject = toNonEmptyString(resourceFromPayload?.url)
+    ?? toNonEmptyString(resourceFromPayload?.resource);
+  const url = toNonEmptyString(resourceFromPayload)
+    ?? urlFromPayloadObject
+    ?? toNonEmptyString(requirementResource)
+    ?? toNonEmptyString(requirementResource?.url)
+    ?? toNonEmptyString(requirementResource?.resource);
+  return {
+    url,
+    description: toNonEmptyString(resourceFromPayload?.description)
+      ?? toNonEmptyString(requirements.description),
+    mimeType: toNonEmptyString(resourceFromPayload?.mimeType)
+      ?? toNonEmptyString(requirements.mimeType)
+      ?? "application/json"
+  };
+}
+
 function normalizeCdpPaymentPayload(paymentPayload) {
+  return normalizeCdpPaymentPayloadWithRequirements({ paymentPayload, paymentRequirements: null });
+}
+
+function normalizeCdpPaymentPayloadWithRequirements({ paymentPayload, paymentRequirements }) {
   if (!paymentPayload || typeof paymentPayload !== "object" || Array.isArray(paymentPayload)) {
     return {
       normalizedPaymentPayload: paymentPayload,
       diagnostics: {
         cdp_payment_payload_keys: [],
-        cdp_payment_payload_has_scheme: false,
-        cdp_payment_payload_scheme: null,
-        cdp_payment_payload_network: null,
-        cdp_payment_payload_stripped_wrapper_fields: false,
+        cdp_payment_payload_has_accepted: false,
+        cdp_payment_payload_has_payload: false,
+        cdp_payment_payload_has_resource: false,
+        cdp_payment_payload_resource_type: null,
+        cdp_payment_payload_accepted_keys: [],
+        cdp_payment_payload_accepted_has_amount: false,
+        cdp_payment_payload_accepted_has_maxAmountRequired: false,
         cdp_payment_payload_source: "native"
       }
     };
   }
-  const hasTopLevelScheme = Boolean(toNonEmptyString(paymentPayload?.scheme));
-  const hasTopLevelPayload = Boolean(paymentPayload?.payload && typeof paymentPayload.payload === "object" && !Array.isArray(paymentPayload.payload));
-  const hasAcceptedWrapper = Boolean(paymentPayload?.accepted && typeof paymentPayload.accepted === "object" && !Array.isArray(paymentPayload.accepted));
-  const source = hasTopLevelPayload && hasAcceptedWrapper && !hasTopLevelScheme
-    ? "normalized_from_wrapper"
-    : "native";
+  const hasAccepted = Boolean(toObjectOrNull(paymentPayload?.accepted));
+  const hasPayload = Boolean(toObjectOrNull(paymentPayload?.payload));
+  const hasResourceObject = Boolean(toObjectOrNull(paymentPayload?.resource));
+  const source = hasAccepted && hasPayload && hasResourceObject ? "native" : "normalized_from_wrapper";
 
-  let normalizedPaymentPayload = source === "normalized_from_wrapper"
-    ? {
-      x402Version: paymentPayload?.x402Version ?? 2,
-      scheme: paymentPayload?.scheme ?? paymentPayload?.accepted?.scheme,
-      network: paymentPayload?.network ?? paymentPayload?.accepted?.network,
-      payload: paymentPayload?.payload
-    }
-    : { ...paymentPayload };
-
-  const wrapperAcceptedPresentInInput = Object.hasOwn(paymentPayload, "accepted");
-  const wrapperResourcePresentInInput = Object.hasOwn(paymentPayload, "resource");
-  if (Object.hasOwn(normalizedPaymentPayload, "accepted")) {
-    delete normalizedPaymentPayload.accepted;
-  }
-  if (Object.hasOwn(normalizedPaymentPayload, "resource")) {
-    delete normalizedPaymentPayload.resource;
-  }
+  let normalizedPaymentPayload = {
+    x402Version: paymentPayload?.x402Version ?? 2,
+    accepted: normalizeCdpAccepted({ paymentPayload, paymentRequirements }),
+    payload: paymentPayload?.payload,
+    resource: normalizeCdpResource({ paymentPayload, paymentRequirements })
+  };
 
   const payload = normalizedPaymentPayload?.payload;
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -182,25 +234,31 @@ function normalizeCdpPaymentPayload(paymentPayload) {
   }
 
   const payloadKeys = Object.keys(normalizedPaymentPayload ?? {});
+  const resourceType = Array.isArray(normalizedPaymentPayload?.resource)
+    ? "array"
+    : (normalizedPaymentPayload?.resource === null ? "null" : typeof normalizedPaymentPayload?.resource);
+  const acceptedKeys = Object.keys(toObjectOrNull(normalizedPaymentPayload?.accepted) ?? {});
   return {
     normalizedPaymentPayload,
     diagnostics: {
       cdp_payment_payload_keys: payloadKeys,
-      cdp_payment_payload_has_scheme: Boolean(toNonEmptyString(normalizedPaymentPayload?.scheme)),
-      cdp_payment_payload_scheme: toNonEmptyString(normalizedPaymentPayload?.scheme),
-      cdp_payment_payload_network: toNonEmptyString(normalizedPaymentPayload?.network),
-      cdp_payment_payload_stripped_wrapper_fields: Boolean(
-        (wrapperAcceptedPresentInInput || wrapperResourcePresentInInput)
-        && !Object.hasOwn(normalizedPaymentPayload, "accepted")
-        && !Object.hasOwn(normalizedPaymentPayload, "resource")
-      ),
+      cdp_payment_payload_has_accepted: Boolean(toObjectOrNull(normalizedPaymentPayload?.accepted)),
+      cdp_payment_payload_has_payload: Boolean(toObjectOrNull(normalizedPaymentPayload?.payload)),
+      cdp_payment_payload_has_resource: Boolean(toObjectOrNull(normalizedPaymentPayload?.resource)),
+      cdp_payment_payload_resource_type: resourceType,
+      cdp_payment_payload_accepted_keys: acceptedKeys,
+      cdp_payment_payload_accepted_has_amount: Object.hasOwn(toObjectOrNull(normalizedPaymentPayload?.accepted) ?? {}, "amount"),
+      cdp_payment_payload_accepted_has_maxAmountRequired: Object.hasOwn(toObjectOrNull(normalizedPaymentPayload?.accepted) ?? {}, "maxAmountRequired"),
       cdp_payment_payload_source: source
     }
   };
 }
 
 function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
-  const { normalizedPaymentPayload, diagnostics } = normalizeCdpPaymentPayload(paymentPayload);
+  const { normalizedPaymentPayload, diagnostics } = normalizeCdpPaymentPayloadWithRequirements({
+    paymentPayload,
+    paymentRequirements
+  });
   const payloadWithVersion = normalizedPaymentPayload && typeof normalizedPaymentPayload === "object"
     ? { x402Version: 2, ...normalizedPaymentPayload }
     : normalizedPaymentPayload;
@@ -270,8 +328,8 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
     x402Version: payload?.x402Version ?? null,
     has_paymentPayload: Boolean(paymentPayload),
     has_paymentRequirements: Boolean(paymentRequirements),
-    payload_scheme: paymentPayload?.scheme ?? paymentRequirements?.scheme ?? null,
-    payload_network: paymentPayload?.network ?? paymentRequirements?.network ?? null,
+    payload_scheme: paymentPayload?.accepted?.scheme ?? paymentRequirements?.scheme ?? null,
+    payload_network: paymentPayload?.accepted?.network ?? paymentRequirements?.network ?? null,
     payload_auth_from: authorization?.from ?? null,
     payload_auth_to: authorization?.to ?? null,
     payload_auth_value: authorization?.value ?? null,

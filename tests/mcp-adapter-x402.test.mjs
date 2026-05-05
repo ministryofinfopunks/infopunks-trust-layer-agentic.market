@@ -439,11 +439,16 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
 
   assert.equal(postedVerifyBody.x402Version, 2);
   assert.equal(postedVerifyBody.paymentPayload.x402Version, 2);
-  assert.equal(postedVerifyBody.paymentPayload.scheme, "exact");
-  assert.equal(postedVerifyBody.paymentPayload.network, "eip155:8453");
+  assert.equal(postedVerifyBody.paymentPayload.accepted.scheme, "exact");
+  assert.equal(postedVerifyBody.paymentPayload.accepted.network, "eip155:8453");
   assert.equal(Boolean(postedVerifyBody.paymentPayload.payload), true);
-  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), false);
-  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), false);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), true);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), true);
+  assert.equal(typeof postedVerifyBody.paymentPayload.resource, "object");
+  assert.equal(typeof postedVerifyBody.paymentPayload.resource.url, "string");
+  assert.equal(postedVerifyBody.paymentPayload.resource.mimeType, "application/json");
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "scheme"), false);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "network"), false);
   assert.deepEqual(postedVerifyBody.paymentRequirements, paymentPayload.accepted);
   assert.equal(postedVerifyBody.paymentRequirements.amount, "10000");
   assert.equal(typeof postedVerifyBody.paymentRequirements.amount, "string");
@@ -545,7 +550,7 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
   assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 });
 
-test("cdp verifier preserves native x402v2 payload with top-level scheme", async (t) => {
+test("cdp verifier preserves native x402v2 payload with accepted and resource", async (t) => {
   const originalFetch = globalThis.fetch;
   let postedVerifyBody = null;
   globalThis.fetch = async (url, init) => {
@@ -589,8 +594,19 @@ test("cdp verifier preserves native x402v2 payload with top-level scheme", async
 
   const nativePaymentPayload = {
     x402Version: 2,
-    scheme: "exact",
-    network: "eip155:8453",
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USDC",
+        version: "2",
+        symbol: "USDC"
+      }
+    },
     payload: {
       authorization: {
         from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
@@ -598,9 +614,11 @@ test("cdp verifier preserves native x402v2 payload with top-level scheme", async
       },
       signature: `0x${"b".repeat(130)}`
     },
-    domain: "preserve_me",
-    resource: "https://should-not-be-forwarded.example",
-    accepted: { scheme: "legacy-wrapper-field" }
+    resource: {
+      url: "https://infopunks.example/v1/resolve-trust",
+      description: "preserve_me",
+      mimeType: "application/json"
+    }
   };
   const paymentRequirements = {
     scheme: "exact",
@@ -625,11 +643,13 @@ test("cdp verifier preserves native x402v2 payload with top-level scheme", async
   });
 
   assert.equal(result.ok, true);
-  assert.equal(postedVerifyBody.paymentPayload.scheme, "exact");
-  assert.equal(postedVerifyBody.paymentPayload.network, "eip155:8453");
-  assert.equal(postedVerifyBody.paymentPayload.domain, "preserve_me");
-  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), false);
-  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), false);
+  assert.equal(postedVerifyBody.paymentPayload.accepted.scheme, "exact");
+  assert.equal(postedVerifyBody.paymentPayload.accepted.network, "eip155:8453");
+  assert.equal(postedVerifyBody.paymentPayload.resource.description, "preserve_me");
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), true);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), true);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "scheme"), false);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "network"), false);
 });
 
 test("cdp verifier normalizes nonce/signature byte arrays to hex strings for verify and settle", async (t) => {
