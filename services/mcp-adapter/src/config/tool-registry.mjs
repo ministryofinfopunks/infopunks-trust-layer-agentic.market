@@ -42,7 +42,7 @@ export const TOOL_OUTPUT_SCHEMAS = {
   }
 };
 
-export const RESOLVE_TRUST_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and risk context.";
+export const RESOLVE_TRUST_DESCRIPTION = "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services.";
 
 export const TOOL_REGISTRY = [
   tool("resolve_trust", "Resolve Trust", RESOLVE_TRUST_DESCRIPTION, {

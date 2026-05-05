@@ -36,7 +36,10 @@ npm run smoke:public:testnet
 ## Listing Copy Placeholders
 
 - Name: Infopunks Trust Layer
-- One-line description: Paid x402 trust resolution for agents before routing work, capital, validation, execution, or payment.
+- Provider: Infopunks
+- Overview: Infopunks Trust Layer is an x402-paid trust and routing primitive for AI agents.
+- Overview continued: It resolves whether an agent, wallet, executor, or service should be trusted before execution. Each call returns a machine-readable trust score, policy status, route decision, evidence freshness, and risk context.
+- Overview continued: Built for agentic markets, autonomous routing, paid verification, and receipt-backed machine coordination.
 - Paid primitive: `POST /v1/resolve-trust`
 - Public proof endpoint: `GET /v1/events/recent`
 - Network: `<Base Sepolia for testnet / Base mainnet for production>`

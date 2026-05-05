@@ -11,7 +11,12 @@ const MISSING_EXTENSION_RESPONSES_REASON = "EXTENSION-RESPONSES header not prese
 const BAZAAR_METADATA_STATUS = "included";
 const EXTERNAL_BAZAAR_ACCEPTANCE_STATUS = "pending_confirmation";
 const BAZAAR_METADATA_PUBLIC_NOTE = "Trust Layer includes Bazaar metadata and is discovery-ready. External Bazaar acceptance is pending confirmation.";
-const RESOLVE_TRUST_BAZAAR_DESCRIPTION = "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.";
+const LISTING_NAME = "Infopunks Trust Layer";
+const LISTING_PROVIDER = "Infopunks";
+const LISTING_OVERVIEW = "Infopunks Trust Layer is an x402-paid trust and routing primitive for AI agents.\n\nIt resolves whether an agent, wallet, executor, or service should be trusted before execution. Each call returns a machine-readable trust score, policy status, route decision, evidence freshness, and risk context.\n\nBuilt for agentic markets, autonomous routing, paid verification, and receipt-backed machine coordination.";
+const RESOLVE_TRUST_RESOURCE_NAME = "resolve_trust";
+const RESOLVE_TRUST_RESOURCE_TITLE = "Resolve Trust";
+const RESOLVE_TRUST_RESOURCE_DESCRIPTION = "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services.";
 const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
   subject_id: "agent_public_paid_proof",
   context: {
@@ -278,7 +283,7 @@ function routeOutputSchema(resourcePath, toolDef) {
 
 function routeDescription(resourcePath, toolDef) {
   return resourcePath === "/v1/resolve-trust"
-    ? RESOLVE_TRUST_BAZAAR_DESCRIPTION
+    ? RESOLVE_TRUST_RESOURCE_DESCRIPTION
     : (toolDef?.description ?? "Paid Infopunks endpoint");
 }
 
@@ -291,9 +296,14 @@ function routeExtensions(resourcePath) {
 
 function routeResourceMetadata(config, toolDef, resourcePath) {
   const url = resourceUrl(config, resourcePath);
+  const isResolveTrustRoute = resourcePath === "/v1/resolve-trust";
   return {
+    name: isResolveTrustRoute ? RESOLVE_TRUST_RESOURCE_NAME : (toolDef?.name ?? null),
+    title: isResolveTrustRoute ? RESOLVE_TRUST_RESOURCE_TITLE : (toolDef?.title ?? null),
+    provider: LISTING_PROVIDER,
     resource: url,
     url,
+    path: resourcePath,
     description: routeDescription(resourcePath, toolDef),
     mimeType: "application/json",
     inputSchema: toolDef?.inputSchema ?? undefined,
@@ -834,10 +844,13 @@ function buildInfopunksTrustLayerManifest(config) {
   const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
   const resolveTrustTool = findTool("resolve_trust");
   return {
-    name: "Infopunks Trust Layer",
+    name: LISTING_NAME,
+    title: LISTING_NAME,
+    provider: LISTING_PROVIDER,
     slug: "infopunks-trust-layer",
     version: config.adapterVersion,
-    description: "x402-gated trust resolution for agent routing and Agentic.Market discovery.",
+    description: LISTING_OVERVIEW,
+    overview: LISTING_OVERVIEW,
     endpoints: {
       health: `${origin}/health`,
       openapi: `${origin}/openapi.json`,
@@ -875,9 +888,13 @@ function buildOpenApiJson(origin, config) {
   return {
     openapi: "3.1.0",
     info: {
-      title: "Infopunks Trust Layer API",
+      title: LISTING_NAME,
       version: config.adapterVersion,
-      description: "Public x402-gated trust resolution surface for Agentic.Market."
+      summary: "x402-paid trust and routing primitive for AI agents.",
+      description: LISTING_OVERVIEW,
+      "x-provider": {
+        name: LISTING_PROVIDER
+      }
     },
     servers: [{ url: origin }],
     paths: {
@@ -949,8 +966,8 @@ function buildOpenApiJson(origin, config) {
       },
       "/v1/resolve-trust": {
         post: {
-          summary: "Resolve trust with x402 payment gating",
-          description: RESOLVE_TRUST_BAZAAR_DESCRIPTION,
+          summary: RESOLVE_TRUST_RESOURCE_TITLE,
+          description: RESOLVE_TRUST_RESOURCE_DESCRIPTION,
           extensions: {
             bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
           },
@@ -1353,6 +1370,8 @@ function renderProofPage({ latestProof, previousReceiptId }) {
   const lines = [
     "INFOPUNKS TRUST LAYER",
     "PAID CALL VERIFIED",
+    `PROVIDER: ${LISTING_PROVIDER.toUpperCase()}`,
+    "RESOURCE: POST /v1/resolve-trust",
     BAZAAR_METADATA_PUBLIC_NOTE,
     "",
     `latest_receipt_id: ${latestProof.receipt_id}`,
@@ -1385,7 +1404,7 @@ function renderProofPage({ latestProof, previousReceiptId }) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Infopunks Trust Layer Proof</title>
+    <title>${LISTING_NAME} Proof</title>
     <style>
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
@@ -1484,7 +1503,8 @@ function renderProofPage({ latestProof, previousReceiptId }) {
         <div class="screen">
           <p class="bootline">INFOPUNKS TRUST LAYER</p>
           <p class="status">PAID CALL VERIFIED</p>
-          <h1>Infopunks Trust Layer Proof</h1>
+          <h1>${LISTING_NAME} Proof</h1>
+          <p class="subtle">Provider: ${escapeHtml(LISTING_PROVIDER)} | Resource: POST /v1/resolve-trust</p>
           <p class="subtle">${escapeHtml(BAZAAR_METADATA_PUBLIC_NOTE)}</p>
           <div class="cards">
             <section class="card">
@@ -1568,7 +1588,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
       const origin = (config.publicUrl ?? `http://${config.host}:${config.port}`).replace(/\/$/, "");
       const marketplaceListing = `${origin}/.well-known/${"agentic-marketplace"}.json`;
       const body = [
-        "Infopunks Trust Layer alive",
+        `${LISTING_NAME} alive`,
         `${origin}/health`,
         `${origin}/proof`,
         `${origin}/openapi.json`,
@@ -1649,7 +1669,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           {
             error: {
               code: "ENTITLEMENT_REQUIRED",
-              message: "x402 payment is required for this endpoint."
+              message: `${LISTING_NAME} requires x402 payment for this endpoint.`
             }
           },
           {
@@ -1690,7 +1710,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           {
             error: {
               code: "ENTITLEMENT_REQUIRED",
-              message: "x402 payment is required for this endpoint."
+              message: `${LISTING_NAME} requires x402 payment for this endpoint.`
             }
           },
           {

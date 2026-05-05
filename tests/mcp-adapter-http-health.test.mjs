@@ -96,6 +96,9 @@ test("/health is unconditional and does not depend on upstream readiness", async
     const trustLayer = await fetch(`http://127.0.0.1:${port}/.well-known/infopunks-trust-layer.json`);
     assert.equal(trustLayer.status, 200);
     const trustLayerBody = await trustLayer.json();
+    assert.equal(trustLayerBody?.name, "Infopunks Trust Layer");
+    assert.equal(trustLayerBody?.title, "Infopunks Trust Layer");
+    assert.equal(trustLayerBody?.provider, "Infopunks");
     assert.equal(trustLayerBody.endpoints.resolve_trust.endsWith("/v1/resolve-trust"), true);
     assert.equal(trustLayerBody?.bazaar?.metadata_status, "included");
     assert.equal(trustLayerBody?.bazaar?.external_acceptance, "pending_confirmation");
@@ -108,6 +111,8 @@ test("/health is unconditional and does not depend on upstream readiness", async
     const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
     assert.equal(openapi.status, 200);
     const openapiBody = await openapi.json();
+    assert.equal(openapiBody?.info?.title, "Infopunks Trust Layer");
+    assert.equal(openapiBody?.info?.["x-provider"]?.name, "Infopunks");
     assert.ok(openapiBody.paths["/v1/resolve-trust"]);
     assert.ok(openapiBody.paths["/v1/events/recent"]);
     assert.ok(openapiBody.paths["/proof"]);
@@ -473,15 +478,17 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
       `http://127.0.0.1:${port}/v1/resolve-trust`
     );
     assert.equal(trustLayerBody?.resources?.resolve_trust?.url.endsWith("/v1/resolve-trust"), true);
-    assert.equal(trustLayerBody?.resources?.resolve_trust?.description.includes("machine-readable risk context"), true);
+    assert.equal(
+      trustLayerBody?.resources?.resolve_trust?.description,
+      "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
+    );
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.name, "resolve_trust");
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.title, "Resolve Trust");
+    assert.equal(trustLayerBody?.resources?.resolve_trust?.provider, "Infopunks");
     assert.equal(trustLayerBody?.resources?.resolve_trust?.mimeType, "application/json");
     assert.deepEqual(
       Object.keys(trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar ?? {}).sort(),
-      ["info", "routeTemplate", "schema"]
-    );
-    assert.equal(
-      trustLayerBody?.resources?.resolve_trust?.extensions?.bazaar?.routeTemplate,
-      "/v1/resolve-trust"
+      ["info", "schema"]
     );
     assert.deepEqual(
       trustLayerBody?.resources?.resolve_trust?.outputSchema?.required,
@@ -491,10 +498,13 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     const openapi = await fetch(`http://127.0.0.1:${port}/openapi.json`);
     assert.equal(openapi.status, 200);
     const openapiBody = await openapi.json();
-    assert.equal(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.description.includes("machine-readable risk context"), true);
+    assert.equal(
+      openapiBody?.paths?.["/v1/resolve-trust"]?.post?.description,
+      "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
+    );
     assert.deepEqual(
       Object.keys(openapiBody?.paths?.["/v1/resolve-trust"]?.post?.extensions?.bazaar ?? {}).sort(),
-      ["info", "routeTemplate", "schema"]
+      ["info", "schema"]
     );
 
     const unpaidEmpty = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, { method: "POST" });
@@ -515,19 +525,22 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(challenge.accepts?.[0]?.resource?.extensions?.bazaar?.info?.input?.type, "http");
     assert.equal(challenge.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
     assert.equal(challenge.resource?.mimeType, "application/json");
-    assert.equal(challenge.resource?.description.includes("machine-readable risk context"), true);
+    assert.equal(
+      challenge.resource?.description,
+      "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
+    );
+    assert.equal(challenge.resource?.name, "resolve_trust");
+    assert.equal(challenge.resource?.title, "Resolve Trust");
+    assert.equal(challenge.resource?.provider, "Infopunks");
     assert.deepEqual(
       Object.keys(challenge.resource?.extensions?.bazaar ?? {}).sort(),
-      ["info", "routeTemplate", "schema"]
+      ["info", "schema"]
     );
-    assert.equal(challenge.resource?.extensions?.bazaar?.routeTemplate, "/v1/resolve-trust");
     assert.deepEqual(
       challenge.resource?.extensions?.bazaar?.info?.input,
       {
         type: "http",
         method: "POST",
-        path: "/v1/resolve-trust",
-        contentType: "application/json",
         bodyType: "json",
         body: {
           subject_id: "agent_public_paid_proof",

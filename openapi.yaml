@@ -1,9 +1,16 @@
 openapi: 3.1.0
 info:
-  title: Infopunks Trust Layer API
+  title: Infopunks Trust Layer
   version: 1.0.0
-  summary: Paid trust resolution surface for Agentic.Market.
-  description: Minimal launch contract.
+  summary: x402-paid trust and routing primitive for AI agents.
+  description: |-
+    Infopunks Trust Layer is an x402-paid trust and routing primitive for AI agents.
+
+    It resolves whether an agent, wallet, executor, or service should be trusted before execution. Each call returns a machine-readable trust score, policy status, route decision, evidence freshness, and risk context.
+
+    Built for agentic markets, autonomous routing, paid verification, and receipt-backed machine coordination.
+  x-provider:
+    name: Infopunks
 servers:
   - url: http://localhost:4021
     description: Local adapter
@@ -72,8 +79,8 @@ paths:
           description: Receipt not found
   /v1/resolve-trust:
     post:
-      summary: Resolve trust with x402 payment gating
-      description: Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and risk context.
+      summary: Resolve Trust
+      description: Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services.
       extensions:
         bazaar:
           discoverable: true

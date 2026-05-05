@@ -1,6 +1,12 @@
 # Agentic.Market Listing Notes
 
-Infopunks Trust Layer exposes one paid trust primitive for Agentic.Market: `POST /v1/resolve-trust`.
+Infopunks Trust Layer (provider: Infopunks) exposes one paid trust primitive for Agentic.Market: `POST /v1/resolve-trust`.
+
+Infopunks Trust Layer is an x402-paid trust and routing primitive for AI agents.
+
+It resolves whether an agent, wallet, executor, or service should be trusted before execution. Each call returns a machine-readable trust score, policy status, route decision, evidence freshness, and risk context.
+
+Built for agentic markets, autonomous routing, paid verification, and receipt-backed machine coordination.
 
 ## Public Endpoints
 

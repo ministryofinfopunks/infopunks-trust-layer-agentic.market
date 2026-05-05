@@ -111,7 +111,13 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
-  assert.equal(decoded.resource.description.includes("machine-readable risk context"), true);
+  assert.equal(
+    decoded.resource.description,
+    "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
+  );
+  assert.equal(decoded.resource.name, "resolve_trust");
+  assert.equal(decoded.resource.title, "Resolve Trust");
+  assert.equal(decoded.resource.provider, "Infopunks");
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
@@ -219,7 +225,10 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");
   assert.equal(decoded.accepts[0].extra.version, "2");
   assert.equal(decoded.accepts[0].extra.symbol, "USDC");
-  assert.equal(decoded.resource.description, "Infopunks Trust Layer resolves real-time trust scores and routing decisions for AI agents, executors, wallets, and services. It returns trust_score, policy status, route decision, evidence freshness, and machine-readable risk context.");
+  assert.equal(decoded.resource.description, "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services.");
+  assert.equal(decoded.resource.name, "resolve_trust");
+  assert.equal(decoded.resource.title, "Resolve Trust");
+  assert.equal(decoded.resource.provider, "Infopunks");
   assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(decoded.resource.mimeType, "application/json");
   assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
