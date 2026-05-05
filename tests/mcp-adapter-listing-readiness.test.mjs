@@ -32,8 +32,9 @@ function assertLeanPaymentRequiredShape(decoded, expectedUrl, expectedMaxAmountR
   assert.equal(decoded?.x402Version, 2);
   assert.equal(decoded?.error, "Payment required");
   assert.equal(Array.isArray(decoded?.accepts), true);
+  assert.equal(decoded?.accepts?.[0]?.amount, String(expectedMaxAmountRequired));
   assert.equal(decoded?.accepts?.[0]?.maxAmountRequired, String(expectedMaxAmountRequired));
-  assert.equal(Object.hasOwn(decoded?.accepts?.[0] ?? {}, "amount"), false);
+  assert.equal(decoded?.accepts?.[0]?.amount, decoded?.accepts?.[0]?.maxAmountRequired);
   assert.equal(typeof decoded?.accepts?.[0]?.resource, "string");
   assert.equal(decoded?.accepts?.[0]?.resource, expectedUrl);
   assert.equal(typeof decoded?.accepts?.[0]?.description, "string");
@@ -170,8 +171,9 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.x402Version, 2);
   assert.equal(decoded.accepts[0].scheme, "exact");
   assert.equal(decoded.accepts[0].network, "eip155:8453");
+  assert.equal(decoded.accepts[0].amount, "10000");
   assert.equal(decoded.accepts[0].maxAmountRequired, "10000");
-  assert.equal(Object.hasOwn(decoded.accepts[0], "amount"), false);
+  assert.equal(decoded.accepts[0].amount, decoded.accepts[0].maxAmountRequired);
   assert.equal(decoded.accepts[0].asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
   assert.equal(decoded.accepts[0].payTo, "0x1111111111111111111111111111111111111111");
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");

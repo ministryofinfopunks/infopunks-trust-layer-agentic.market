@@ -274,6 +274,8 @@ export class EntitlementService {
         verify_requirements_resource: payment?.paymentRequirements?.resource ?? null,
         verify_requirements_maxAmountRequired: payment?.paymentRequirements?.maxAmountRequired ?? null,
         verify_requirements_amount: payment?.paymentRequirements?.amount ?? null,
+        verify_requirements_amount_equals_maxAmountRequired:
+          String(payment?.paymentRequirements?.amount ?? "") === String(payment?.paymentRequirements?.maxAmountRequired ?? ""),
         verify_requirements_network: payment?.paymentRequirements?.network ?? null,
         verify_requirements_asset: payment?.paymentRequirements?.asset ?? null,
         verify_requirements_payTo: payment?.paymentRequirements?.payTo ?? null,

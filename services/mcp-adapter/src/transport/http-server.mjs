@@ -1,5 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { bazaarResourceServerExtension, declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
 import { findTool } from "../config/tool-registry.mjs";
 import { resolveExactEvmTokenMetadata } from "../config/x402-token-metadata.mjs";
@@ -459,6 +460,7 @@ function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountReq
   return {
     scheme: config.x402PaymentScheme ?? "exact",
     network,
+    amount: String(maxAmountRequired),
     maxAmountRequired: String(maxAmountRequired),
     asset: config.x402PaymentAssetAddress,
     payTo: config.x402PayTo,
@@ -1810,6 +1812,18 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
           paymentRequirements: canonicalRequirement
         };
       }
+      const challengeVerifyRequirementsDeepEqual = Boolean(
+        normalized?.payment?.paymentRequirements && canonicalRequirement
+        && isDeepStrictEqual(normalized.payment.paymentRequirements, canonicalRequirement)
+      );
+      logger.info({
+        event: "resolve_trust_payment_requirement_alignment",
+        request_id: requestId,
+        amount_present: Object.hasOwn(canonicalRequirement ?? {}, "amount"),
+        maxAmountRequired_present: Object.hasOwn(canonicalRequirement ?? {}, "maxAmountRequired"),
+        amount_equals_maxAmountRequired: String(canonicalRequirement?.amount ?? "") === String(canonicalRequirement?.maxAmountRequired ?? ""),
+        challenge_verify_requirements_deep_equal: challengeVerifyRequirementsDeepEqual
+      });
       if (!normalized.entity_id) {
         sendJson(
           res,
@@ -1948,6 +1962,8 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             verify_requirement_keys: headerPayment?.payment_header_diagnostics?.verify_requirement_keys ?? [],
             requirement_has_maxAmountRequired: headerPayment?.payment_header_diagnostics?.has_maxAmountRequired ?? false,
             requirement_has_amount: headerPayment?.payment_header_diagnostics?.has_amount ?? false,
+            requirement_amount_equals_maxAmountRequired: String(canonicalRequirement?.amount ?? "") === String(canonicalRequirement?.maxAmountRequired ?? ""),
+            challenge_verify_requirements_deep_equal: challengeVerifyRequirementsDeepEqual,
             verify_requirements_resource: canonicalRequirement?.resource ?? null,
             verify_requirements_maxAmountRequired: canonicalRequirement?.maxAmountRequired ?? null,
             verify_requirements_amount: canonicalRequirement?.amount ?? null,
