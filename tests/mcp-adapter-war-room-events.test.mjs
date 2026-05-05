@@ -43,7 +43,18 @@ function paymentTemplate(overrides = {}) {
   };
 }
 
-async function startHarness(t, { verifierMode = "stub", sharedSecret = null, resolveTrustHandler } = {}) {
+async function startHarness(
+  t,
+  {
+    verifierMode = "stub",
+    sharedSecret = null,
+    resolveTrustHandler,
+    facilitatorProvider = "openfacilitator",
+    verifierUrl = null,
+    cdpApiKeyId = null,
+    cdpApiKeySecret = null
+  } = {}
+) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "mcp-war-room-"));
   const store = new AdapterStateStore({ dbPath: path.join(dir, "adapter.db") });
 
@@ -56,10 +67,17 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
 
   const verifier = new X402Verifier({
     mode: verifierMode,
+    facilitatorProvider,
+    verifierUrl,
+    cdpApiKeyId,
+    cdpApiKeySecret,
     sharedSecret,
     logger,
     timeoutMs: 1000
   });
+  if (facilitatorProvider === "cdp") {
+    verifier.authHeaders = async () => ({});
+  }
 
   const entitlementService = new EntitlementService({
     verifier,
@@ -73,7 +91,8 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
       x402SupportedNetworks: ["eip155:84532"],
       x402RequirePaymentAsset: false,
       x402RequirePaymentNetwork: false,
-      x402VerifierMode: verifierMode
+      x402VerifierMode: verifierMode,
+      x402FacilitatorProvider: facilitatorProvider
     },
     logger,
     metrics: { inc() {} }
@@ -87,6 +106,7 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
       x402ReplayWindowSeconds: 600,
       x402DailySpendLimitUnits: 100,
       x402VerifierMode: verifierMode,
+      x402FacilitatorProvider: facilitatorProvider,
       paidRequestTimestampWindowSeconds: 120,
       callerResolutionPolicy: "lookup-only",
       entitlementTokenRequired: false,
@@ -129,6 +149,7 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
       adapterName: "infopunks-war-room-test",
       adapterVersion: "test",
       x402VerifierMode: verifierMode,
+      x402FacilitatorProvider: facilitatorProvider,
       settlementWebhookHmacSecret: "whsec",
       settlementWebhookSecret: null,
       adminEndpointsRequireToken: true,
@@ -161,10 +182,10 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function postTrustScore(body) {
+  async function postTrustScore(body, extraHeaders = {}) {
     const res = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...extraHeaders },
       body: JSON.stringify(body)
     });
     const text = await res.text();
@@ -180,7 +201,7 @@ async function startHarness(t, { verifierMode = "stub", sharedSecret = null, res
     return { status: res.status, payload };
   }
 
-  return { postTrustScore, getWarRoomEvents, store };
+  return { postTrustScore, getWarRoomEvents, store, baseUrl: `http://127.0.0.1:${port}` };
 }
 
 test("war room feed records success and endpoint returns newest first", async (t) => {
@@ -256,6 +277,112 @@ test("war room feed records failed payment event", async (t) => {
   const serializedDiagnostics = JSON.stringify(failed.x402_diagnostics).toLowerCase();
   assert.equal(serializedDiagnostics.includes("private_key"), false);
   assert.equal(serializedDiagnostics.includes("cdp_api_key"), false);
+});
+
+test("war room feed includes safe cdp verify error details and accepted comparisons", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const verifierUrl = "https://api.cdp.coinbase.com/platform/v2/x402";
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/verify")) {
+      return new Response(
+        JSON.stringify({
+          correlationId: "corr_test_402_1",
+          errorLink: "https://docs.cdp.coinbase.com/x402/errors#invalid-payment",
+          errorMessage: "Invalid payment payload.",
+          errorType: "INVALID_PAYMENT"
+        }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    return originalFetch(url, init);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const { postTrustScore, getWarRoomEvents, baseUrl } = await startHarness(t, {
+    verifierMode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl,
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-secret"
+  });
+
+  const decodedPaymentPayload = {
+    x402Version: 2,
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    resource: `${baseUrl}/v1/resolve-trust`,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532",
+      maxAmountRequired: "10000",
+      amount: "10000",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+      resource: `${baseUrl}/v1/resolve-trust`
+    }
+  };
+  const xPayment = Buffer.from(JSON.stringify(decodedPaymentPayload), "utf8").toString("base64");
+
+  const response = await postTrustScore(
+    {
+      entity_id: "agent_001",
+      context: { task_type: "market_analysis", domain: "general", risk_level: "medium" }
+    },
+    {
+      "x-payment": xPayment
+    }
+  );
+  assert.equal(response.status, 402);
+
+  const eventsResponse = await getWarRoomEvents();
+  const failed = eventsResponse.payload.events.find((entry) =>
+    entry.event_type === "paid_call.payment_failed"
+    || entry.error_code === "PAYMENT_VERIFICATION_FAILED"
+    || entry.status === "failed"
+  );
+  assert.ok(failed?.x402_diagnostics);
+  const diagnostics = failed.x402_diagnostics;
+  assert.equal(diagnostics.facilitator_provider, "cdp");
+  assert.equal(diagnostics.facilitator_verify_status, 400);
+  assert.deepEqual(diagnostics.facilitator_verify_body_keys.sort(), ["correlationId", "errorLink", "errorMessage", "errorType"]);
+  assert.equal(diagnostics.facilitator_error_type, "INVALID_PAYMENT");
+  assert.equal(diagnostics.facilitator_error_message, "Invalid payment payload.");
+  assert.equal(diagnostics.facilitator_correlation_id, "corr_test_402_1");
+  assert.equal(diagnostics.facilitator_error_link, "https://docs.cdp.coinbase.com/x402/errors#invalid-payment");
+  assert.equal(Array.isArray(diagnostics.payment_accepted_keys), true);
+  assert.equal(diagnostics.payment_accepted_has_amount, true);
+  assert.equal(diagnostics.payment_accepted_has_maxAmountRequired, true);
+  assert.equal(diagnostics.payment_accepted_amount, "10000");
+  assert.equal(diagnostics.payment_accepted_maxAmountRequired, "10000");
+  assert.equal(diagnostics.payment_accepted_resource, `${baseUrl}/v1/resolve-trust`);
+  assert.equal(diagnostics.payment_accepted_network, "eip155:84532");
+  assert.equal(diagnostics.payment_accepted_asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+  assert.equal(diagnostics.payment_accepted_payTo, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
+  assert.equal(diagnostics.payment_accepted_scheme, "exact");
+  assert.equal(diagnostics.accepted_resource_matches_verify_resource, true);
+  assert.equal(diagnostics.accepted_network_matches_verify_network, true);
+  assert.equal(diagnostics.accepted_asset_matches_verify_asset, true);
+  assert.equal(diagnostics.accepted_payTo_matches_verify_payTo, true);
+  assert.equal(diagnostics.accepted_amount_matches_verify_price, true);
+  assert.equal(diagnostics.accepted_maxAmountRequired_matches_verify_price, true);
+  assert.equal(Object.hasOwn(diagnostics, "paymentPayload"), false);
+  assert.equal(Object.hasOwn(diagnostics, "signature"), false);
+  assert.equal(Object.hasOwn(diagnostics, "payment_signature"), false);
+  const serializedDiagnostics = JSON.stringify(diagnostics).toLowerCase();
+  assert.equal(serializedDiagnostics.includes("private_key"), false);
+  assert.equal(serializedDiagnostics.includes("cdp_api_key"), false);
+  assert.equal(serializedDiagnostics.includes("\"authorization\""), false);
+  assert.equal(serializedDiagnostics.includes(xPayment.toLowerCase()), false);
 });
 
 test("war room frontend script syntax check passes", () => {

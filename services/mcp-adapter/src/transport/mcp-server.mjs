@@ -111,9 +111,38 @@ function boolOrNull(value) {
   return null;
 }
 
+function numericOrNull(value) {
+  if (value == null || typeof value === "boolean") {
+    return null;
+  }
+  if (typeof value === "string" && value.trim().length === 0) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function compareOptionalStrings(left, right, { caseInsensitive = false } = {}) {
+  const normalizedLeft = toStringOrNull(left);
+  const normalizedRight = toStringOrNull(right);
+  if (normalizedLeft == null || normalizedRight == null) {
+    return null;
+  }
+  if (caseInsensitive) {
+    return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
+  }
+  return normalizedLeft === normalizedRight;
+}
+
 function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifierBody = {}, error = {}, fallbackFacilitatorProvider = null }) {
   const payment = args?.payment ?? {};
   const paymentRequirements = payment?.paymentRequirements ?? {};
+  const paymentPayload = payment?.paymentPayload && typeof payment.paymentPayload === "object" && !Array.isArray(payment.paymentPayload)
+    ? payment.paymentPayload
+    : null;
+  const paymentAccepted = paymentPayload?.accepted && typeof paymentPayload.accepted === "object" && !Array.isArray(paymentPayload.accepted)
+    ? paymentPayload.accepted
+    : null;
   const selectedHeader = toStringOrNull(
     verifierDetails?.payment_header_selected
     ?? payment?.payment_header_diagnostics?.selected_header
@@ -126,11 +155,9 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
   const paymentSignaturePresent = verifierDetails?.payment_signature_present
     ?? payment?.payment_header_diagnostics?.payment_signature_present
     ?? null;
-  const selectedHeaderBytes = Number.isFinite(Number(
+  const selectedHeaderBytes = numericOrNull(
     verifierDetails?.selected_header_bytes ?? payment?.payment_header_diagnostics?.selected_header_bytes
-  ))
-    ? Number(verifierDetails?.selected_header_bytes ?? payment?.payment_header_diagnostics?.selected_header_bytes)
-    : null;
+  );
   const payloadDecodeSuccess = verifierDetails?.header_payload_decoded
     ?? payment?.payment_header_diagnostics?.selected_payload_decoded
     ?? null;
@@ -147,6 +174,26 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
   const amountEqualsMaxAmountRequired = verifyAmount != null && verifyMaxAmountRequired != null
     ? String(verifyAmount) === String(verifyMaxAmountRequired)
     : null;
+  const verifyResource = toStringOrNull(paymentRequirements?.resource ?? verifierDetails?.verify_requirements_resource);
+  const verifyNetwork = toStringOrNull(paymentRequirements?.network ?? verifierDetails?.verify_requirements_network);
+  const verifyAsset = toStringOrNull(paymentRequirements?.asset ?? verifierDetails?.verify_requirements_asset);
+  const verifyPayTo = toStringOrNull(paymentRequirements?.payTo ?? verifierDetails?.verify_requirements_payTo);
+  const verifyPrice = toStringOrNull(
+    paymentRequirements?.maxAmountRequired
+    ?? paymentRequirements?.amount
+    ?? verifierDetails?.verify_requirements_maxAmountRequired
+    ?? verifierDetails?.verify_requirements_amount
+  );
+  const paymentAcceptedKeys = arrayOfStrings(paymentAccepted ? Object.keys(paymentAccepted) : []);
+  const paymentAcceptedHasAmount = paymentAccepted ? Object.hasOwn(paymentAccepted, "amount") : null;
+  const paymentAcceptedHasMaxAmountRequired = paymentAccepted ? Object.hasOwn(paymentAccepted, "maxAmountRequired") : null;
+  const paymentAcceptedAmount = toStringOrNull(paymentAccepted?.amount);
+  const paymentAcceptedMaxAmountRequired = toStringOrNull(paymentAccepted?.maxAmountRequired);
+  const paymentAcceptedResource = toStringOrNull(paymentAccepted?.resource);
+  const paymentAcceptedNetwork = toStringOrNull(paymentAccepted?.network);
+  const paymentAcceptedAsset = toStringOrNull(paymentAccepted?.asset);
+  const paymentAcceptedPayTo = toStringOrNull(paymentAccepted?.payTo);
+  const paymentAcceptedScheme = toStringOrNull(paymentAccepted?.scheme);
   const facilitatorVerifyBodyKeys = arrayOfStrings(
     verifierDetails?.facilitator_verify_response_body_keys
     ?? (verifierBody && typeof verifierBody === "object" ? Object.keys(verifierBody) : [])
@@ -157,27 +204,45 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
     payment_signature_present: boolOrNull(paymentSignaturePresent),
     selected_header_bytes: selectedHeaderBytes,
     payment_payload_decode_success: boolOrNull(payloadDecodeSuccess),
-    decoded_payload_top_level_keys: arrayOfStrings(verifierDetails?.header_payload_top_level_keys),
+    decoded_payload_top_level_keys: arrayOfStrings(
+      verifierDetails?.header_payload_top_level_keys
+      ?? payment?.payment_header_diagnostics?.decoded_payload_keys
+    ),
     verify_requirement_keys: verifyRequirementKeys,
     has_amount: boolOrNull(hasAmount),
     has_maxAmountRequired: boolOrNull(hasMaxAmountRequired),
     amount_equals_maxAmountRequired: boolOrNull(amountEqualsMaxAmountRequired),
-    verify_resource: toStringOrNull(paymentRequirements?.resource ?? verifierDetails?.verify_requirements_resource),
-    verify_network: toStringOrNull(paymentRequirements?.network ?? verifierDetails?.verify_requirements_network),
-    verify_asset: toStringOrNull(paymentRequirements?.asset ?? verifierDetails?.verify_requirements_asset),
-    verify_payTo: toStringOrNull(paymentRequirements?.payTo ?? verifierDetails?.verify_requirements_payTo),
-    verify_price: toStringOrNull(
-      paymentRequirements?.maxAmountRequired
-      ?? paymentRequirements?.amount
-      ?? verifierDetails?.verify_requirements_maxAmountRequired
-      ?? verifierDetails?.verify_requirements_amount
-    ),
+    verify_resource: verifyResource,
+    verify_network: verifyNetwork,
+    verify_asset: verifyAsset,
+    verify_payTo: verifyPayTo,
+    verify_price: verifyPrice,
+    payment_accepted_keys: paymentAcceptedKeys,
+    payment_accepted_has_amount: boolOrNull(paymentAcceptedHasAmount),
+    payment_accepted_has_maxAmountRequired: boolOrNull(paymentAcceptedHasMaxAmountRequired),
+    payment_accepted_amount: paymentAcceptedAmount,
+    payment_accepted_maxAmountRequired: paymentAcceptedMaxAmountRequired,
+    payment_accepted_resource: paymentAcceptedResource,
+    payment_accepted_network: paymentAcceptedNetwork,
+    payment_accepted_asset: paymentAcceptedAsset,
+    payment_accepted_payTo: paymentAcceptedPayTo,
+    payment_accepted_scheme: paymentAcceptedScheme,
+    accepted_resource_matches_verify_resource: compareOptionalStrings(paymentAcceptedResource, verifyResource),
+    accepted_network_matches_verify_network: compareOptionalStrings(paymentAcceptedNetwork, verifyNetwork),
+    accepted_asset_matches_verify_asset: compareOptionalStrings(paymentAcceptedAsset, verifyAsset, { caseInsensitive: true }),
+    accepted_payTo_matches_verify_payTo: compareOptionalStrings(paymentAcceptedPayTo, verifyPayTo, { caseInsensitive: true }),
+    accepted_amount_matches_verify_price: compareOptionalStrings(paymentAcceptedAmount, verifyPrice),
+    accepted_maxAmountRequired_matches_verify_price: compareOptionalStrings(paymentAcceptedMaxAmountRequired, verifyPrice),
     facilitator_provider: toStringOrNull(
       verifierDetails?.facilitator_provider
       ?? fallbackFacilitatorProvider
     ),
-    facilitator_verify_status: Number.isFinite(Number(verifierDetails?.status)) ? Number(verifierDetails.status) : null,
+    facilitator_verify_status: numericOrNull(verifierDetails?.status),
     facilitator_verify_body_keys: facilitatorVerifyBodyKeys,
+    facilitator_error_type: toStringOrNull(verifierBody?.errorType ?? verifierDetails?.facilitator_error_type),
+    facilitator_error_message: toStringOrNull(verifierBody?.errorMessage ?? verifierDetails?.facilitator_error_message),
+    facilitator_correlation_id: toStringOrNull(verifierBody?.correlationId ?? verifierDetails?.facilitator_correlation_id),
+    facilitator_error_link: toStringOrNull(verifierBody?.errorLink ?? verifierDetails?.facilitator_error_link),
     facilitator_invalidReason: toStringOrNull(verifierBody?.invalidReason ?? verifierBody?.reason ?? verifierDetails?.facilitator_verify_invalidReason),
     facilitator_invalidMessage: toStringOrNull(verifierBody?.invalidMessage ?? verifierBody?.message ?? verifierDetails?.facilitator_verify_invalidMessage),
     sanitized_exception_name: toStringOrNull(error?.name),

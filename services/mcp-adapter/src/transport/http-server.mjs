@@ -1205,6 +1205,17 @@ function toSafeBoolean(value) {
   return typeof value === "boolean" ? value : null;
 }
 
+function toSafeNumber(value) {
+  if (value == null || typeof value === "boolean") {
+    return null;
+  }
+  if (typeof value === "string" && value.trim().length === 0) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function sanitizePublicX402Diagnostics(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -1213,7 +1224,7 @@ function sanitizePublicX402Diagnostics(value) {
     selected_payment_header: toSafeString(value.selected_payment_header) ?? "none",
     x_payment_present: toSafeBoolean(value.x_payment_present),
     payment_signature_present: toSafeBoolean(value.payment_signature_present),
-    selected_header_bytes: Number.isFinite(Number(value.selected_header_bytes)) ? Number(value.selected_header_bytes) : null,
+    selected_header_bytes: toSafeNumber(value.selected_header_bytes),
     payment_payload_decode_success: toSafeBoolean(value.payment_payload_decode_success),
     decoded_payload_top_level_keys: toSafeStringArray(value.decoded_payload_top_level_keys),
     verify_requirement_keys: toSafeStringArray(value.verify_requirement_keys),
@@ -1225,11 +1236,29 @@ function sanitizePublicX402Diagnostics(value) {
     verify_asset: toSafeString(value.verify_asset),
     verify_payTo: toSafeString(value.verify_payTo),
     verify_price: toSafeString(value.verify_price),
+    payment_accepted_keys: toSafeStringArray(value.payment_accepted_keys),
+    payment_accepted_has_amount: toSafeBoolean(value.payment_accepted_has_amount),
+    payment_accepted_has_maxAmountRequired: toSafeBoolean(value.payment_accepted_has_maxAmountRequired),
+    payment_accepted_amount: toSafeString(value.payment_accepted_amount),
+    payment_accepted_maxAmountRequired: toSafeString(value.payment_accepted_maxAmountRequired),
+    payment_accepted_resource: toSafeString(value.payment_accepted_resource),
+    payment_accepted_network: toSafeString(value.payment_accepted_network),
+    payment_accepted_asset: toSafeString(value.payment_accepted_asset),
+    payment_accepted_payTo: toSafeString(value.payment_accepted_payTo),
+    payment_accepted_scheme: toSafeString(value.payment_accepted_scheme),
+    accepted_resource_matches_verify_resource: toSafeBoolean(value.accepted_resource_matches_verify_resource),
+    accepted_network_matches_verify_network: toSafeBoolean(value.accepted_network_matches_verify_network),
+    accepted_asset_matches_verify_asset: toSafeBoolean(value.accepted_asset_matches_verify_asset),
+    accepted_payTo_matches_verify_payTo: toSafeBoolean(value.accepted_payTo_matches_verify_payTo),
+    accepted_amount_matches_verify_price: toSafeBoolean(value.accepted_amount_matches_verify_price),
+    accepted_maxAmountRequired_matches_verify_price: toSafeBoolean(value.accepted_maxAmountRequired_matches_verify_price),
     facilitator_provider: toSafeString(value.facilitator_provider),
-    facilitator_verify_status: Number.isFinite(Number(value.facilitator_verify_status))
-      ? Number(value.facilitator_verify_status)
-      : null,
+    facilitator_verify_status: toSafeNumber(value.facilitator_verify_status),
     facilitator_verify_body_keys: toSafeStringArray(value.facilitator_verify_body_keys),
+    facilitator_error_type: toSafeString(value.facilitator_error_type),
+    facilitator_error_message: toSafeString(value.facilitator_error_message),
+    facilitator_correlation_id: toSafeString(value.facilitator_correlation_id),
+    facilitator_error_link: toSafeString(value.facilitator_error_link),
     facilitator_invalidReason: toSafeString(value.facilitator_invalidReason),
     facilitator_invalidMessage: toSafeString(value.facilitator_invalidMessage),
     sanitized_exception_name: toSafeString(value.sanitized_exception_name),

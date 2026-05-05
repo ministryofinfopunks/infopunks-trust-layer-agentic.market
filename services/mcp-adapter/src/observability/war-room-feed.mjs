@@ -7,6 +7,12 @@ function nowIso() {
 }
 
 function normalizeNumber(value) {
+  if (value == null || typeof value === "boolean") {
+    return null;
+  }
+  if (typeof value === "string" && value.trim().length === 0) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -63,9 +69,29 @@ function normalizeX402Diagnostics(value) {
     verify_asset: normalizeString(value.verify_asset),
     verify_payTo: normalizeString(value.verify_payTo),
     verify_price: normalizeString(value.verify_price),
+    payment_accepted_keys: normalizeStringArray(value.payment_accepted_keys),
+    payment_accepted_has_amount: normalizeBoolean(value.payment_accepted_has_amount),
+    payment_accepted_has_maxAmountRequired: normalizeBoolean(value.payment_accepted_has_maxAmountRequired),
+    payment_accepted_amount: normalizeString(value.payment_accepted_amount),
+    payment_accepted_maxAmountRequired: normalizeString(value.payment_accepted_maxAmountRequired),
+    payment_accepted_resource: normalizeString(value.payment_accepted_resource),
+    payment_accepted_network: normalizeString(value.payment_accepted_network),
+    payment_accepted_asset: normalizeString(value.payment_accepted_asset),
+    payment_accepted_payTo: normalizeString(value.payment_accepted_payTo),
+    payment_accepted_scheme: normalizeString(value.payment_accepted_scheme),
+    accepted_resource_matches_verify_resource: normalizeBoolean(value.accepted_resource_matches_verify_resource),
+    accepted_network_matches_verify_network: normalizeBoolean(value.accepted_network_matches_verify_network),
+    accepted_asset_matches_verify_asset: normalizeBoolean(value.accepted_asset_matches_verify_asset),
+    accepted_payTo_matches_verify_payTo: normalizeBoolean(value.accepted_payTo_matches_verify_payTo),
+    accepted_amount_matches_verify_price: normalizeBoolean(value.accepted_amount_matches_verify_price),
+    accepted_maxAmountRequired_matches_verify_price: normalizeBoolean(value.accepted_maxAmountRequired_matches_verify_price),
     facilitator_provider: normalizeString(value.facilitator_provider),
     facilitator_verify_status: normalizeNumber(value.facilitator_verify_status),
     facilitator_verify_body_keys: normalizeStringArray(value.facilitator_verify_body_keys),
+    facilitator_error_type: normalizeString(value.facilitator_error_type),
+    facilitator_error_message: normalizeString(value.facilitator_error_message),
+    facilitator_correlation_id: normalizeString(value.facilitator_correlation_id),
+    facilitator_error_link: normalizeString(value.facilitator_error_link),
     facilitator_invalidReason: normalizeString(value.facilitator_invalidReason),
     facilitator_invalidMessage: normalizeString(value.facilitator_invalidMessage),
     sanitized_exception_name: normalizeString(value.sanitized_exception_name),
