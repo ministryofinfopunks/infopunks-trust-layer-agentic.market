@@ -254,10 +254,84 @@ function normalizeCdpPaymentPayloadWithRequirements({ paymentPayload, paymentReq
   };
 }
 
+function normalizeCdpPaymentRequirements({ paymentRequirements, paymentPayload }) {
+  const requirements = toObjectOrNull(paymentRequirements) ?? {};
+  const accepted = toObjectOrNull(paymentPayload?.accepted) ?? {};
+  const requirementResourceObject = toObjectOrNull(requirements.resource);
+  const acceptedResourceObject = toObjectOrNull(accepted.resource);
+  const payloadResourceObject = toObjectOrNull(paymentPayload?.resource);
+
+  const normalized = {};
+  const assignIfPresent = (key, value) => {
+    if (value != null) {
+      normalized[key] = value;
+    }
+  };
+
+  assignIfPresent("scheme", requirements.scheme ?? accepted.scheme);
+  assignIfPresent("network", requirements.network ?? accepted.network);
+  assignIfPresent("asset", requirements.asset ?? accepted.asset);
+  assignIfPresent("payTo", requirements.payTo ?? accepted.payTo);
+  assignIfPresent("maxTimeoutSeconds", requirements.maxTimeoutSeconds ?? accepted.maxTimeoutSeconds);
+
+  const normalizedAmount = requirements.amount
+    ?? accepted.amount
+    ?? requirements.maxAmountRequired
+    ?? accepted.maxAmountRequired
+    ?? null;
+  assignIfPresent("amount", normalizedAmount);
+
+  const normalizedResource = toNonEmptyString(requirements.resource)
+    ?? toNonEmptyString(requirementResourceObject?.url)
+    ?? toNonEmptyString(requirementResourceObject?.resource)
+    ?? toNonEmptyString(accepted.resource)
+    ?? toNonEmptyString(acceptedResourceObject?.url)
+    ?? toNonEmptyString(acceptedResourceObject?.resource)
+    ?? toNonEmptyString(paymentPayload?.resource)
+    ?? toNonEmptyString(payloadResourceObject?.url)
+    ?? toNonEmptyString(payloadResourceObject?.resource);
+  assignIfPresent("resource", normalizedResource);
+
+  const normalizedDescription = toNonEmptyString(requirements.description)
+    ?? toNonEmptyString(requirementResourceObject?.description)
+    ?? toNonEmptyString(accepted.description)
+    ?? toNonEmptyString(acceptedResourceObject?.description)
+    ?? toNonEmptyString(payloadResourceObject?.description);
+  assignIfPresent("description", normalizedDescription);
+
+  const normalizedMimeType = toNonEmptyString(requirements.mimeType)
+    ?? toNonEmptyString(requirementResourceObject?.mimeType)
+    ?? toNonEmptyString(accepted.mimeType)
+    ?? toNonEmptyString(acceptedResourceObject?.mimeType)
+    ?? toNonEmptyString(payloadResourceObject?.mimeType);
+  assignIfPresent("mimeType", normalizedMimeType);
+
+  const normalizedExtra = toObjectOrNull(requirements.extra) ?? toObjectOrNull(accepted.extra);
+  assignIfPresent("extra", normalizedExtra);
+
+  const diagnostics = {
+    cdp_payment_requirements_keys: Object.keys(normalized),
+    cdp_payment_requirements_has_amount: Object.hasOwn(normalized, "amount"),
+    cdp_payment_requirements_has_maxAmountRequired: Object.hasOwn(normalized, "maxAmountRequired"),
+    cdp_payment_requirements_amount: normalized.amount ?? null,
+    cdp_payment_requirements_resource: toNonEmptyString(normalized.resource),
+    cdp_payment_requirements_source: "normalized_for_cdp"
+  };
+
+  return {
+    normalizedPaymentRequirements: normalized,
+    diagnostics
+  };
+}
+
 function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
-  const { normalizedPaymentPayload, diagnostics } = normalizeCdpPaymentPayloadWithRequirements({
+  const { normalizedPaymentPayload, diagnostics: payloadDiagnostics } = normalizeCdpPaymentPayloadWithRequirements({
     paymentPayload,
     paymentRequirements
+  });
+  const { normalizedPaymentRequirements, diagnostics: requirementsDiagnostics } = normalizeCdpPaymentRequirements({
+    paymentRequirements,
+    paymentPayload: normalizedPaymentPayload
   });
   const payloadWithVersion = normalizedPaymentPayload && typeof normalizedPaymentPayload === "object"
     ? { x402Version: 2, ...normalizedPaymentPayload }
@@ -266,9 +340,12 @@ function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
     payload: {
       x402Version: 2,
       paymentPayload: payloadWithVersion,
-      paymentRequirements
+      paymentRequirements: normalizedPaymentRequirements
     },
-    diagnostics
+    diagnostics: {
+      ...payloadDiagnostics,
+      ...requirementsDiagnostics
+    }
   };
 }
 
@@ -579,7 +656,7 @@ export class X402Verifier {
           logger: this.logger,
           phase: "verify",
           adapterTraceId,
-          bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(payload?.paymentRequirements)
+          bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(x402PaymentRequirements)
         });
       }
       const response = await withTimeout(
@@ -799,7 +876,7 @@ export class X402Verifier {
       logger: this.logger,
       phase: "settle",
       adapterTraceId,
-      bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(payload?.paymentRequirements)
+      bazaarExtensionPresentInRequestContext: hasBazaarExtensionInPaymentRequirements(paymentRequirements)
     });
 
     try {

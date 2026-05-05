@@ -384,6 +384,18 @@ test("war room feed includes safe cdp verify error details and accepted comparis
   assert.equal(diagnostics.cdp_payment_payload_accepted_has_amount, true);
   assert.equal(diagnostics.cdp_payment_payload_accepted_has_maxAmountRequired, false);
   assert.equal(diagnostics.cdp_payment_payload_source, "normalized_from_wrapper");
+  assert.equal(Array.isArray(diagnostics.cdp_payment_requirements_keys), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("scheme"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("network"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("amount"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("asset"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("payTo"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_keys.includes("resource"), true);
+  assert.equal(diagnostics.cdp_payment_requirements_has_amount, true);
+  assert.equal(diagnostics.cdp_payment_requirements_has_maxAmountRequired, false);
+  assert.equal(diagnostics.cdp_payment_requirements_amount, "10000");
+  assert.equal(diagnostics.cdp_payment_requirements_resource, `${baseUrl}/v1/resolve-trust`);
+  assert.equal(diagnostics.cdp_payment_requirements_source, "normalized_for_cdp");
   assert.equal(Object.hasOwn(diagnostics, "paymentPayload"), false);
   assert.equal(Object.hasOwn(diagnostics, "signature"), false);
   assert.equal(Object.hasOwn(diagnostics, "payment_signature"), false);

@@ -242,6 +242,12 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
     cdp_payment_payload_accepted_has_amount: boolOrNull(verifierDetails?.cdp_payment_payload_accepted_has_amount),
     cdp_payment_payload_accepted_has_maxAmountRequired: boolOrNull(verifierDetails?.cdp_payment_payload_accepted_has_maxAmountRequired),
     cdp_payment_payload_source: toStringOrNull(verifierDetails?.cdp_payment_payload_source),
+    cdp_payment_requirements_keys: arrayOfStrings(verifierDetails?.cdp_payment_requirements_keys),
+    cdp_payment_requirements_has_amount: boolOrNull(verifierDetails?.cdp_payment_requirements_has_amount),
+    cdp_payment_requirements_has_maxAmountRequired: boolOrNull(verifierDetails?.cdp_payment_requirements_has_maxAmountRequired),
+    cdp_payment_requirements_amount: toStringOrNull(verifierDetails?.cdp_payment_requirements_amount),
+    cdp_payment_requirements_resource: toStringOrNull(verifierDetails?.cdp_payment_requirements_resource),
+    cdp_payment_requirements_source: toStringOrNull(verifierDetails?.cdp_payment_requirements_source),
     facilitator_provider: toStringOrNull(
       verifierDetails?.facilitator_provider
       ?? fallbackFacilitatorProvider
