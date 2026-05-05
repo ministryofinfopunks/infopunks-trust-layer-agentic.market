@@ -267,6 +267,22 @@ export class EntitlementService {
     const verifyOnlyDiagnostics = mergeBazaarExtensionDiagnostics(verifyExtensionDiagnostics, null);
 
     if (!verification.ok) {
+      const paymentHeaderDiagnostics = payment?.payment_header_diagnostics ?? {};
+      const verificationDetails = {
+        ...(verification.details ?? {}),
+        facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
+        verify_requirements_resource: payment?.paymentRequirements?.resource ?? null,
+        verify_requirements_amount: payment?.paymentRequirements?.amount ?? null,
+        verify_requirements_network: payment?.paymentRequirements?.network ?? null,
+        verify_requirements_asset: payment?.paymentRequirements?.asset ?? null,
+        verify_requirements_payTo: payment?.paymentRequirements?.payTo ?? null,
+        payment_header_selected: paymentHeaderDiagnostics.selected_header ?? payment?.payment_header_used ?? null,
+        x_payment_present: paymentHeaderDiagnostics.x_payment_present ?? null,
+        payment_signature_present: paymentHeaderDiagnostics.payment_signature_present ?? null,
+        selected_header_bytes: paymentHeaderDiagnostics.selected_header_bytes ?? null,
+        header_payload_decoded: paymentHeaderDiagnostics.selected_payload_decoded ?? null,
+        header_values_differ: paymentHeaderDiagnostics.headers_differ ?? null
+      };
       this.logger?.warn?.({
         event: "paid_call_event",
         ...paidEventBase({
@@ -281,14 +297,15 @@ export class EntitlementService {
         adapter_trace_id: adapterTraceId,
         payer,
         subject_id: subjectId ?? null,
-        error_code: verification.reason ?? "PAYMENT_VERIFICATION_FAILED"
+        error_code: verification.reason ?? "PAYMENT_VERIFICATION_FAILED",
+        ...verificationDetails
       });
       throw makeAdapterError(
         verification.reason ?? "PAYMENT_VERIFICATION_FAILED",
         verification.reason === "ENTITLEMENT_REQUIRED"
           ? `Valid x402 entitlement required for ${operation}.`
           : `x402 payment verification failed for ${operation}.`,
-        verification.details ?? {},
+        verificationDetails,
         false,
         402
       );

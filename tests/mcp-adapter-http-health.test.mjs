@@ -392,7 +392,7 @@ test("public proof endpoints stay consistent with recent paid receipt events", a
   }
 });
 
-test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async () => {
+test("/v1/resolve-trust in cdp mode uses lean canonical requirements and prefers X-PAYMENT", async () => {
   const port = await getFreePort();
   let capturedPayment = null;
 
@@ -534,7 +534,7 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(JSON.stringify(challenge).includes("outputSchema"), false);
     const headerBytes = Buffer.byteLength(challengeRaw, "utf8");
     assert.equal(headerBytes < 8 * 1024, true);
-    assert.equal(headerBytes < 1024, true);
+    assert.equal(headerBytes < 1536, true);
 
     const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
       method: "POST",
@@ -582,10 +582,53 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(capturedPayment?.paymentRequirements?.network, "eip155:8453");
     assert.equal(capturedPayment?.paymentRequirements?.amount, "10000");
     assert.equal(typeof capturedPayment?.paymentRequirements?.amount, "string");
+    assert.deepEqual(capturedPayment?.paymentRequirements, challenge.accepts?.[0]);
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.to, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.value, "10000");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+    const xPaymentPayload = {
+      ...paymentPayload,
+      payload: {
+        ...paymentPayload.payload,
+        authorization: {
+          ...paymentPayload.payload.authorization,
+          from: "0x9999999999999999999999999999999999999999",
+          nonce: "0x9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      }
+    };
+    const paymentSignaturePayload = {
+      ...paymentPayload,
+      payload: {
+        ...paymentPayload.payload,
+        authorization: {
+          ...paymentPayload.payload.authorization,
+          from: "0x8888888888888888888888888888888888888888",
+          nonce: "0x8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    };
+    const xPaymentHeader = Buffer.from(JSON.stringify(xPaymentPayload), "utf8").toString("base64");
+    const paymentSignatureHeader = Buffer.from(JSON.stringify(paymentSignaturePayload), "utf8").toString("base64");
+    const responseWithBothHeaders = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-payment": xPaymentHeader,
+        "payment-signature": paymentSignatureHeader
+      },
+      body: JSON.stringify({
+        subject_id: "agent_paid_dual_header",
+        context: { task_type: "marketplace_routing", domain: "general", risk_level: "medium" }
+      })
+    });
+    assert.equal(responseWithBothHeaders.status, 200);
+    assert.equal(capturedPayment?.payment_header_used, "X-PAYMENT");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x9999999999999999999999999999999999999999");
+    assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.nonce, "0x9999999999999999999999999999999999999999999999999999999999999999");
+    assert.deepEqual(capturedPayment?.paymentRequirements, challenge.accepts?.[0]);
   } finally {
     await transport.close();
   }

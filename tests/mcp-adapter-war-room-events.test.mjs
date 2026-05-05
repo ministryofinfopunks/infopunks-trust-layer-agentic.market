@@ -241,6 +241,10 @@ test("war room feed records failed payment event", async (t) => {
   );
   assert.ok(failed);
   assert.ok(["failed", "rejected"].includes(failed.status));
+  assert.equal(failed.facilitator_provider, "openfacilitator");
+  assert.equal(failed.network, "eip155:84532");
+  assert.equal(failed.payTo, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
+  assert.equal(failed.price, "10000");
 });
 
 test("war room frontend script syntax check passes", () => {

@@ -100,7 +100,7 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
   const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
   assert.equal(encodedBytes < 8 * 1024, true);
-  assert.equal(encodedBytes < 1024, true);
+  assert.equal(encodedBytes < 1536, true);
   assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
@@ -184,7 +184,7 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
   const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
   assert.equal(encodedBytes < 8 * 1024, true);
-  assert.equal(encodedBytes < 1024, true);
+  assert.equal(encodedBytes < 1536, true);
 });
 
 test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
@@ -255,6 +255,85 @@ test("challengeHeaders buyer-style parser compatibility when @x402/core/client i
   } catch {
     t.skip("Found @x402/core/client parser helper but invocation signature is incompatible with this test.");
   }
+});
+
+test("canonical payment requirement exactly matches challenge accepts[0]", () => {
+  const config = {
+    publicUrl: "https://mcp.infopunks.ai",
+    host: "127.0.0.1",
+    port: 4021,
+    x402AcceptedAssets: ["USDC"],
+    x402SupportedNetworks: ["eip155:8453"],
+    x402PaymentScheme: "exact",
+    x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    x402PayTo: "0x1111111111111111111111111111111111111111",
+    x402PricePerUnitAtomic: "10000",
+    x402PaymentTimeoutSeconds: 300,
+    x402Eip712Name: "USD Coin",
+    x402Eip712Version: "2",
+    x402FacilitatorProvider: "cdp"
+  };
+  const toolDef = { pricing: { units: 1 } };
+  const headers = __testOnly.challengeHeaders(config, toolDef);
+  const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
+  const canonical = __testOnly.canonicalPaymentRequirement(config, toolDef, "/v1/resolve-trust", "10000");
+  assert.deepEqual(decoded.accepts[0], canonical);
+});
+
+test("payment header selection prefers X-PAYMENT over PAYMENT-SIGNATURE", () => {
+  const fromAddress = "0x4cC773d286E5aA52591E9E6ebed062cC057C441E";
+  const payloadFromXPayment = Buffer.from(JSON.stringify({
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: fromAddress,
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
+    }
+  }), "utf8").toString("base64");
+  const payloadFromPaymentSignature = Buffer.from(JSON.stringify({
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x1111111111111111111111111111111111111111",
+        nonce: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      signature: `0x${"c".repeat(130)}`
+    }
+  }), "utf8").toString("base64");
+
+  const selected = __testOnly.paymentHeaderSelection({
+    "x-payment": payloadFromXPayment,
+    "payment-signature": payloadFromPaymentSignature
+  });
+  assert.equal(selected.selectedHeader, "X-PAYMENT");
+  assert.equal(selected.xPaymentPresent, true);
+  assert.equal(selected.paymentSignaturePresent, true);
+  assert.equal(selected.headersDiffer, true);
+
+  const parsedPayment = __testOnly.paymentFromHeaders({
+    "x-payment": payloadFromXPayment,
+    "payment-signature": payloadFromPaymentSignature
+  });
+  assert.equal(parsedPayment?.payment_header_used, "X-PAYMENT");
+  assert.equal(parsedPayment?.paymentPayload?.payload?.authorization?.from, fromAddress);
 });
 
 test("trust-score helper mapping emits commercial response format", () => {

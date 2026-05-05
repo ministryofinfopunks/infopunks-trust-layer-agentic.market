@@ -239,6 +239,8 @@ const PAYMENT_ERROR_CODES = new Set([
   "PAYMENT_SESSION_EXPIRED",
   "PAYMENT_REPLAY_DETECTED"
 ]);
+const X_PAYMENT_HEADER = "x-payment";
+const PAYMENT_SIGNATURE_HEADER = "payment-signature";
 
 function safeBase64Encode(value) {
   return Buffer.from(value, "utf8").toString("base64");
@@ -405,6 +407,17 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   const units = Number(toolDef?.pricing?.units ?? 0);
   const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
   const challengeAmount = (unitAmountAtomic * BigInt(Math.max(units, 1))).toString();
+  const canonicalRequirement = canonicalPaymentRequirement(config, toolDef, resourcePath, challengeAmount);
+  const resourceUrlValue = canonicalRequirement.resource;
+  return {
+    x402Version: 2,
+    error: "Payment required",
+    resource: resourceUrlValue,
+    accepts: [canonicalRequirement]
+  };
+}
+
+function canonicalPaymentRequirement(config, toolDef, resourcePath, amount) {
   const network = normalizeNetworkToCaip2((config.x402SupportedNetworks ?? [])[0] ?? "eip155:84532");
   const tokenMetadata = resolveExactEvmTokenMetadata({
     network,
@@ -443,25 +456,17 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
 
   const resourceUrlValue = resourceUrl(config, resourcePath);
   const description = routeDescription(resourcePath, toolDef);
-  const mimeType = "application/json";
   return {
-    x402Version: 2,
-    error: "Payment required",
+    scheme: config.x402PaymentScheme ?? "exact",
+    network,
+    amount: String(amount),
+    asset: config.x402PaymentAssetAddress,
+    payTo: config.x402PayTo,
+    maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
     resource: resourceUrlValue,
-    accepts: [
-      {
-        scheme: config.x402PaymentScheme ?? "exact",
-        network,
-        amount: challengeAmount,
-        asset: config.x402PaymentAssetAddress,
-        payTo: config.x402PayTo,
-        maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
-        resource: resourceUrlValue,
-        description,
-        mimeType,
-        ...(Object.keys(extra).length > 0 ? { extra } : {})
-      }
-    ]
+    description,
+    mimeType: "application/json",
+    ...(Object.keys(extra).length > 0 ? { extra } : {})
   };
 }
 
@@ -506,6 +511,50 @@ function decodePaymentHeader(paymentHeader) {
   }
 }
 
+function paymentHeaderSelection(headers) {
+  const xPayment = headers?.[X_PAYMENT_HEADER];
+  const paymentSignature = headers?.[PAYMENT_SIGNATURE_HEADER];
+  const hasXPayment = typeof xPayment === "string" && xPayment.trim().length > 0;
+  const hasPaymentSignature = typeof paymentSignature === "string" && paymentSignature.trim().length > 0;
+  const selectedHeader = hasXPayment ? "X-PAYMENT" : (hasPaymentSignature ? "PAYMENT-SIGNATURE" : "none");
+  const selectedValue = hasXPayment ? xPayment.trim() : (hasPaymentSignature ? paymentSignature.trim() : null);
+  const headersDiffer = hasXPayment && hasPaymentSignature && xPayment.trim() !== paymentSignature.trim();
+  return {
+    xPaymentPresent: hasXPayment,
+    paymentSignaturePresent: hasPaymentSignature,
+    selectedHeader,
+    selectedValue,
+    selectedHeaderBytes: selectedValue ? Buffer.byteLength(selectedValue, "utf8") : 0,
+    headersDiffer
+  };
+}
+
+function paymentFromHeaderSelection(selection) {
+  const decodedPayload = decodePaymentHeader(selection?.selectedValue ?? null);
+  if (!decodedPayload) {
+    return null;
+  }
+  const accepted = decodedPayload?.accepted ?? null;
+  return {
+    rail: "x402",
+    payer: extractPayerFromPayload(decodedPayload),
+    nonce: extractNonceFromPayload(decodedPayload),
+    asset: accepted?.asset ?? null,
+    network: accepted?.network ?? null,
+    paymentPayload: decodedPayload,
+    paymentRequirements: accepted,
+    payment_header_used: selection?.selectedHeader ?? "none",
+    payment_header_diagnostics: {
+      x_payment_present: selection?.xPaymentPresent ?? false,
+      payment_signature_present: selection?.paymentSignaturePresent ?? false,
+      selected_header: selection?.selectedHeader ?? "none",
+      selected_header_bytes: selection?.selectedHeaderBytes ?? 0,
+      selected_payload_decoded: true,
+      headers_differ: selection?.headersDiffer ?? false
+    }
+  };
+}
+
 function displayPrice(value) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -530,24 +579,9 @@ function extractNonceFromPayload(paymentPayload) {
   return null;
 }
 
-function paymentFromHeaders(headers, facilitatorProvider = "openfacilitator") {
-  const paymentSignatureHeader = headers?.["payment-signature"];
-  const legacyPaymentHeader = facilitatorProvider === "cdp" ? null : headers?.["x-payment"];
-  const paymentHeader = paymentSignatureHeader ?? legacyPaymentHeader;
-  const decodedPayload = decodePaymentHeader(paymentHeader);
-  if (!decodedPayload) {
-    return null;
-  }
-  const accepted = decodedPayload?.accepted ?? null;
-  return {
-    rail: "x402",
-    payer: extractPayerFromPayload(decodedPayload),
-    nonce: extractNonceFromPayload(decodedPayload),
-    asset: accepted?.asset ?? null,
-    network: accepted?.network ?? null,
-    paymentPayload: decodedPayload,
-    paymentRequirements: accepted
-  };
+function paymentFromHeaders(headers) {
+  const selection = paymentHeaderSelection(headers);
+  return paymentFromHeaderSelection(selection);
 }
 
 function hasBodyPayment(payment) {
@@ -567,8 +601,8 @@ function hasBodyPayment(payment) {
   );
 }
 
-function mergeHeaderPayment(body, headers, facilitatorProvider = "openfacilitator") {
-  const headerPayment = paymentFromHeaders(headers, facilitatorProvider);
+function mergeHeaderPayment(body, headers, _facilitatorProvider = "openfacilitator", precomputedHeaderPayment = null) {
+  const headerPayment = precomputedHeaderPayment ?? paymentFromHeaders(headers);
   const idempotencyKey = headers?.["idempotency-key"] ?? headers?.["x-idempotency-key"] ?? null;
   const requestTimestamp = headers?.["x-request-timestamp"] ?? null;
   const nonce = headers?.["x-payment-nonce"] ?? null;
@@ -593,8 +627,8 @@ function mergeHeaderPayment(body, headers, facilitatorProvider = "openfacilitato
     return {
       ...body,
       payment: {
-        ...headerPayment,
         ...body.payment,
+        ...headerPayment,
         ...(typeof idempotencyKey === "string" && idempotencyKey.trim() ? { idempotency_key: idempotencyKey.trim() } : {}),
         ...(typeof requestTimestamp === "string" && requestTimestamp.trim() ? { request_timestamp: requestTimestamp.trim() } : {}),
         ...(typeof nonce === "string" && nonce.trim() ? { nonce: nonce.trim() } : {})
@@ -1664,9 +1698,32 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         ? req.headers["x-request-id"].trim()
         : `req_${randomUUID()}`;
       const toolDef = findTool("resolve_trust");
-      const headerPayment = paymentFromHeaders(req.headers, config.x402FacilitatorProvider);
+      const canonicalChallenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
+      const canonicalRequirement = canonicalChallenge?.accepts?.[0] ?? null;
+      const headerSelection = paymentHeaderSelection(req.headers);
+      const headerPayment = paymentFromHeaderSelection(headerSelection);
+      logger.info({
+        event: "resolve_trust_payment_header_diagnostics",
+        request_id: requestId,
+        selected_header: headerSelection.selectedHeader,
+        x_payment_present: headerSelection.xPaymentPresent,
+        payment_signature_present: headerSelection.paymentSignaturePresent,
+        selected_header_bytes: headerSelection.selectedHeaderBytes,
+        selected_payload_decoded: Boolean(headerPayment?.paymentPayload),
+        headers_differ: headerSelection.headersDiffer
+      });
+      if (headerSelection.headersDiffer) {
+        logger.warn?.({
+          event: "resolve_trust_payment_header_mismatch",
+          request_id: requestId,
+          selected_header: headerSelection.selectedHeader,
+          x_payment_present: headerSelection.xPaymentPresent,
+          payment_signature_present: headerSelection.paymentSignaturePresent,
+          selected_header_bytes: headerSelection.selectedHeaderBytes
+        });
+      }
       if (!headerPayment && !hasRequestBody(req)) {
-        const challenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
+        const challenge = canonicalChallenge;
         sendJson(
           res,
           402,
@@ -1704,10 +1761,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         sendJson(res, 400, { error: "invalid_json", message: error?.message ?? "invalid_json" }, { ...corsHeaders(), "x-request-id": requestId });
         return;
       }
-      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers, config.x402FacilitatorProvider);
+      const body = mergeHeaderPayment(bodyAndRaw.parsed ?? {}, req.headers, config.x402FacilitatorProvider, headerPayment);
       const suppliedPayment = headerPayment || hasBodyPayment(body?.payment);
       if (!suppliedPayment) {
-        const challenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
+        const challenge = canonicalChallenge;
         sendJson(
           res,
           402,
@@ -1735,6 +1792,12 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         return;
       }
       const normalized = normalizeTrustScoreRequest(body);
+      if (normalized?.payment && typeof normalized.payment === "object" && canonicalRequirement) {
+        normalized.payment = {
+          ...normalized.payment,
+          paymentRequirements: canonicalRequirement
+        };
+      }
       if (!normalized.entity_id) {
         sendJson(
           res,
@@ -1852,6 +1915,7 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
 
         if (PAYMENT_ERROR_CODES.has(code)) {
           const challenge = statusCode === 402 ? paymentRequiredEnvelope(config, toolDef, endpointPath) : null;
+          const verifierBody = errorEnvelope?.error?.details?.verifier_body ?? {};
           logger.info({
             event: statusCode === 402 ? "402_challenge_issued" : "payment_failed",
             request_id: requestId,
@@ -1859,6 +1923,23 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             endpoint: endpointPath,
             entity_id: normalized.entity_id,
             code,
+            facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator",
+            network: canonicalRequirement?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
+            payTo: canonicalRequirement?.payTo ?? config.x402PayTo ?? null,
+            price: canonicalRequirement?.amount ?? config.x402PricePerUnitAtomic ?? null,
+            payment_header_selected: headerSelection.selectedHeader,
+            x_payment_present: headerSelection.xPaymentPresent,
+            payment_signature_present: headerSelection.paymentSignaturePresent,
+            selected_header_bytes: headerSelection.selectedHeaderBytes,
+            header_payload_decoded: Boolean(headerPayment?.paymentPayload),
+            verify_requirements_resource: canonicalRequirement?.resource ?? null,
+            verify_requirements_amount: canonicalRequirement?.amount ?? null,
+            verify_requirements_network: canonicalRequirement?.network ?? null,
+            verify_requirements_asset: canonicalRequirement?.asset ?? null,
+            verify_requirements_payTo: canonicalRequirement?.payTo ?? null,
+            facilitator_verify_http_status: errorEnvelope?.error?.details?.status ?? null,
+            facilitator_verify_invalidReason: verifierBody?.invalidReason ?? verifierBody?.reason ?? null,
+            facilitator_verify_invalidMessage: verifierBody?.invalidMessage ?? verifierBody?.message ?? null,
             ...(statusCode === 402
               ? { bazaar_extension_present_in_402_challenge: hasBazaarExtensionInChallenge(challenge) }
               : {})
@@ -1927,6 +2008,9 @@ export const __testOnly = {
   validateBazaarExtension,
   validateJsonSchema,
   challengeHeaders,
+  canonicalPaymentRequirement,
+  paymentHeaderSelection,
+  paymentFromHeaders,
   normalizeTrustScoreRequest,
   toTrustScoreResponse,
   toResolveTrustV1Response,

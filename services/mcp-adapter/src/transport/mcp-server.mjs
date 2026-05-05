@@ -560,6 +560,8 @@ export class McpServer {
     } catch (error) {
       if (isPaidOperation) {
         const code = error?.code ?? "UPSTREAM_UNAVAILABLE";
+        const verifierDetails = error?.details ?? {};
+        const verifierBody = verifierDetails?.verifier_body ?? {};
         const eventType = code === "REPLAY_DETECTED"
           ? "paid_call.replay_rejected"
           : code === "PAYMENT_VERIFICATION_FAILED" || code === "PAYMENT_SESSION_EXPIRED"
@@ -573,8 +575,28 @@ export class McpServer {
           status: eventType === "paid_call.replay_rejected" ? "rejected" : "failed",
           receipt_id: billing?.payment_receipt_id ?? null,
           amount: billing?.billed_units ?? toolDef.pricing?.units ?? 0,
+          facilitator_provider: billing?.x402_receipt?.facilitator_provider ?? this.config.x402FacilitatorProvider ?? "openfacilitator",
+          network: billing?.x402_receipt?.network
+            ?? args?.payment?.paymentRequirements?.network
+            ?? verifierDetails?.verify_requirements_network
+            ?? this.config.x402SupportedNetworks?.[0]
+            ?? null,
+          payTo: billing?.x402_receipt?.payTo
+            ?? args?.payment?.paymentRequirements?.payTo
+            ?? verifierDetails?.verify_requirements_payTo
+            ?? this.config.x402PayTo
+            ?? null,
+          price: billing?.x402_receipt?.price
+            ?? args?.payment?.paymentRequirements?.amount
+            ?? verifierDetails?.verify_requirements_amount
+            ?? this.config.x402Price
+            ?? this.config.x402PricePerUnitAtomic
+            ?? null,
           error_code: code,
-          reason: error?.message ?? null
+          reason: error?.message ?? null,
+          facilitator_verify_http_status: verifierDetails?.status ?? null,
+          facilitator_verify_invalidReason: verifierBody?.invalidReason ?? verifierBody?.reason ?? null,
+          facilitator_verify_invalidMessage: verifierBody?.invalidMessage ?? verifierBody?.message ?? null
         });
         this.logger?.warn?.({
           event: "paid_call_event",
