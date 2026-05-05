@@ -460,7 +460,6 @@ function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountReq
   return {
     scheme: config.x402PaymentScheme ?? "exact",
     network,
-    amount: String(maxAmountRequired),
     maxAmountRequired: String(maxAmountRequired),
     asset: config.x402PaymentAssetAddress,
     payTo: config.x402PayTo,

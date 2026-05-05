@@ -515,9 +515,8 @@ test("/v1/resolve-trust in cdp mode uses lean canonical requirements and prefers
     assert.equal(challenge.x402Version, 2);
     assert.equal(challenge.accepts?.[0]?.scheme, "exact");
     assert.equal(challenge.accepts?.[0]?.network, "eip155:8453");
-    assert.equal(challenge.accepts?.[0]?.amount, "10000");
     assert.equal(challenge.accepts?.[0]?.maxAmountRequired, "10000");
-    assert.equal(challenge.accepts?.[0]?.amount, challenge.accepts?.[0]?.maxAmountRequired);
+    assert.equal(Object.hasOwn(challenge.accepts?.[0] ?? {}, "amount"), false);
     assert.equal(challenge.accepts?.[0]?.asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
     assert.equal(challenge.accepts?.[0]?.payTo, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
     assert.equal(challenge.accepts?.[0]?.extra?.name, "USD Coin");
@@ -582,10 +581,9 @@ test("/v1/resolve-trust in cdp mode uses lean canonical requirements and prefers
     assert.equal(response.status, 200);
     assert.equal(capturedPayment?.paymentPayload?.x402Version, 2);
     assert.equal(capturedPayment?.paymentRequirements?.network, "eip155:8453");
-    assert.equal(capturedPayment?.paymentRequirements?.amount, "10000");
     assert.equal(capturedPayment?.paymentRequirements?.maxAmountRequired, "10000");
     assert.equal(typeof capturedPayment?.paymentRequirements?.maxAmountRequired, "string");
-    assert.equal(capturedPayment?.paymentRequirements?.amount, capturedPayment?.paymentRequirements?.maxAmountRequired);
+    assert.equal(Object.hasOwn(capturedPayment?.paymentRequirements ?? {}, "amount"), false);
     assert.deepEqual(capturedPayment?.paymentRequirements, challenge.accepts?.[0]);
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.to, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
