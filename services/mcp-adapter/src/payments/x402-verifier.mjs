@@ -112,47 +112,105 @@ function cdpV2PayloadPair(payment) {
   return { paymentPayload, paymentRequirements };
 }
 
+function toNonEmptyString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function normalizeCdpPaymentPayload(paymentPayload) {
-  if (!paymentPayload || typeof paymentPayload !== "object") {
-    return paymentPayload;
+  if (!paymentPayload || typeof paymentPayload !== "object" || Array.isArray(paymentPayload)) {
+    return {
+      normalizedPaymentPayload: paymentPayload,
+      diagnostics: {
+        cdp_payment_payload_keys: [],
+        cdp_payment_payload_has_scheme: false,
+        cdp_payment_payload_scheme: null,
+        cdp_payment_payload_network: null,
+        cdp_payment_payload_stripped_wrapper_fields: false,
+        cdp_payment_payload_source: "native"
+      }
+    };
   }
-  const payload = paymentPayload?.payload;
-  if (!payload || typeof payload !== "object") {
-    return paymentPayload;
-  }
-  const authorization = payload?.authorization;
-  const normalizedSignature = normalizeHexBytesLike(payload?.signature);
-  const normalizedNonce = normalizeHexBytesLike(authorization?.nonce);
+  const hasTopLevelScheme = Boolean(toNonEmptyString(paymentPayload?.scheme));
+  const hasTopLevelPayload = Boolean(paymentPayload?.payload && typeof paymentPayload.payload === "object" && !Array.isArray(paymentPayload.payload));
+  const hasAcceptedWrapper = Boolean(paymentPayload?.accepted && typeof paymentPayload.accepted === "object" && !Array.isArray(paymentPayload.accepted));
+  const source = hasTopLevelPayload && hasAcceptedWrapper && !hasTopLevelScheme
+    ? "normalized_from_wrapper"
+    : "native";
 
-  const signatureChanged = normalizedSignature !== payload?.signature;
-  const nonceChanged = normalizedNonce !== authorization?.nonce;
-  if (!signatureChanged && !nonceChanged) {
-    return paymentPayload;
+  let normalizedPaymentPayload = source === "normalized_from_wrapper"
+    ? {
+      x402Version: paymentPayload?.x402Version ?? 2,
+      scheme: paymentPayload?.scheme ?? paymentPayload?.accepted?.scheme,
+      network: paymentPayload?.network ?? paymentPayload?.accepted?.network,
+      payload: paymentPayload?.payload
+    }
+    : { ...paymentPayload };
+
+  const wrapperAcceptedPresentInInput = Object.hasOwn(paymentPayload, "accepted");
+  const wrapperResourcePresentInInput = Object.hasOwn(paymentPayload, "resource");
+  if (Object.hasOwn(normalizedPaymentPayload, "accepted")) {
+    delete normalizedPaymentPayload.accepted;
+  }
+  if (Object.hasOwn(normalizedPaymentPayload, "resource")) {
+    delete normalizedPaymentPayload.resource;
   }
 
-  const normalizedAuthorization = nonceChanged
-    ? { ...authorization, nonce: normalizedNonce }
-    : authorization;
-  const normalizedPayload = {
-    ...payload,
-    ...(nonceChanged ? { authorization: normalizedAuthorization } : {}),
-    ...(signatureChanged ? { signature: normalizedSignature } : {})
-  };
+  const payload = normalizedPaymentPayload?.payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const authorization = payload?.authorization;
+    const normalizedSignature = normalizeHexBytesLike(payload?.signature);
+    const normalizedNonce = normalizeHexBytesLike(authorization?.nonce);
+    const signatureChanged = normalizedSignature !== payload?.signature;
+    const nonceChanged = normalizedNonce !== authorization?.nonce;
+    if (signatureChanged || nonceChanged) {
+      const normalizedAuthorization = nonceChanged && authorization && typeof authorization === "object"
+        ? { ...authorization, nonce: normalizedNonce }
+        : authorization;
+      normalizedPaymentPayload = {
+        ...normalizedPaymentPayload,
+        payload: {
+          ...payload,
+          ...(nonceChanged ? { authorization: normalizedAuthorization } : {}),
+          ...(signatureChanged ? { signature: normalizedSignature } : {})
+        }
+      };
+    }
+  }
+
+  const payloadKeys = Object.keys(normalizedPaymentPayload ?? {});
   return {
-    ...paymentPayload,
-    payload: normalizedPayload
+    normalizedPaymentPayload,
+    diagnostics: {
+      cdp_payment_payload_keys: payloadKeys,
+      cdp_payment_payload_has_scheme: Boolean(toNonEmptyString(normalizedPaymentPayload?.scheme)),
+      cdp_payment_payload_scheme: toNonEmptyString(normalizedPaymentPayload?.scheme),
+      cdp_payment_payload_network: toNonEmptyString(normalizedPaymentPayload?.network),
+      cdp_payment_payload_stripped_wrapper_fields: Boolean(
+        (wrapperAcceptedPresentInInput || wrapperResourcePresentInInput)
+        && !Object.hasOwn(normalizedPaymentPayload, "accepted")
+        && !Object.hasOwn(normalizedPaymentPayload, "resource")
+      ),
+      cdp_payment_payload_source: source
+    }
   };
 }
 
 function cdpV2PhasePayload({ paymentPayload, paymentRequirements }) {
-  const normalizedPaymentPayload = normalizeCdpPaymentPayload(paymentPayload);
-  const payloadWithVersion = paymentPayload && typeof paymentPayload === "object"
+  const { normalizedPaymentPayload, diagnostics } = normalizeCdpPaymentPayload(paymentPayload);
+  const payloadWithVersion = normalizedPaymentPayload && typeof normalizedPaymentPayload === "object"
     ? { x402Version: 2, ...normalizedPaymentPayload }
     : normalizedPaymentPayload;
   return {
-    x402Version: 2,
-    paymentPayload: payloadWithVersion,
-    paymentRequirements
+    payload: {
+      x402Version: 2,
+      paymentPayload: payloadWithVersion,
+      paymentRequirements
+    },
+    diagnostics
   };
 }
 
@@ -212,8 +270,8 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
     x402Version: payload?.x402Version ?? null,
     has_paymentPayload: Boolean(paymentPayload),
     has_paymentRequirements: Boolean(paymentRequirements),
-    payload_scheme: paymentPayload?.accepted?.scheme ?? paymentRequirements?.scheme ?? null,
-    payload_network: paymentPayload?.accepted?.network ?? paymentRequirements?.network ?? null,
+    payload_scheme: paymentPayload?.scheme ?? paymentRequirements?.scheme ?? null,
+    payload_network: paymentPayload?.network ?? paymentRequirements?.network ?? null,
     payload_auth_from: authorization?.from ?? null,
     payload_auth_to: authorization?.to ?? null,
     payload_auth_value: authorization?.value ?? null,
@@ -379,6 +437,7 @@ export class X402Verifier {
     const x402NativeFlow = Boolean(x402PaymentPayload && x402PaymentRequirements);
     const payloadPayer = extractPayerFromPaymentPayload(x402PaymentPayload);
     const payloadNonce = extractNonceFromPaymentPayload(x402PaymentPayload);
+    let cdpPaymentPayloadDiagnostics = null;
 
     if (this.mode === "stub") {
       const result = {
@@ -429,10 +488,14 @@ export class X402Verifier {
       const payload = x402NativeFlow
         ? {
           ...(this.facilitatorProvider === "cdp"
-            ? cdpV2PhasePayload({
-              paymentPayload: x402PaymentPayload,
-              paymentRequirements: x402PaymentRequirements
-            })
+            ? (() => {
+              const phasePayload = cdpV2PhasePayload({
+                paymentPayload: x402PaymentPayload,
+                paymentRequirements: x402PaymentRequirements
+              });
+              cdpPaymentPayloadDiagnostics = phasePayload.diagnostics;
+              return phasePayload.payload;
+            })()
             : {
               paymentPayload: x402PaymentPayload,
               paymentRequirements: x402PaymentRequirements
@@ -498,7 +561,8 @@ export class X402Verifier {
           reason: "PAYMENT_VERIFICATION_FAILED",
           details: {
             status: response.status,
-            verifier_body: responseBody
+            verifier_body: responseBody,
+            ...(cdpPaymentPayloadDiagnostics ?? {})
           },
           extension_diagnostics: verifyExtensionDiagnostics
         };
@@ -565,7 +629,10 @@ export class X402Verifier {
       const failure = {
         ok: false,
         reason: "PAYMENT_VERIFICATION_FAILED",
-        details: { message: error?.message ?? "Verifier request failed." }
+        details: {
+          message: error?.message ?? "Verifier request failed.",
+          ...(cdpPaymentPayloadDiagnostics ?? {})
+        }
       };
       this.logger?.warn?.({
         event: "x402_verify",
@@ -662,7 +729,9 @@ export class X402Verifier {
         extension_diagnostics: buildBazaarExtensionDiagnostics(null, "settle")
       };
     }
-    const payload = cdpV2PhasePayload({ paymentPayload, paymentRequirements });
+    const phasePayload = cdpV2PhasePayload({ paymentPayload, paymentRequirements });
+    const payload = phasePayload.payload;
+    const cdpPaymentPayloadDiagnostics = phasePayload.diagnostics;
     logCdpFacilitatorPayloadShape({
       logger: this.logger,
       phase: "settle",
@@ -708,7 +777,11 @@ export class X402Verifier {
         return {
           ok: false,
           reason: "PAYMENT_VERIFICATION_FAILED",
-          details: { status: response.status, verifier_body: responseBody },
+          details: {
+            status: response.status,
+            verifier_body: responseBody,
+            ...(cdpPaymentPayloadDiagnostics ?? {})
+          },
           extension_diagnostics: settleExtensionDiagnostics
         };
       }
@@ -717,7 +790,10 @@ export class X402Verifier {
       return {
         ok: false,
         reason: "PAYMENT_VERIFICATION_FAILED",
-        details: { message: error?.message ?? "Settle request failed." },
+        details: {
+          message: error?.message ?? "Settle request failed.",
+          ...(cdpPaymentPayloadDiagnostics ?? {})
+        },
         extension_diagnostics: buildBazaarExtensionDiagnostics(null, "settle")
       };
     }

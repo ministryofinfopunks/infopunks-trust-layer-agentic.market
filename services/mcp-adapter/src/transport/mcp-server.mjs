@@ -233,6 +233,12 @@ function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifier
     accepted_payTo_matches_verify_payTo: compareOptionalStrings(paymentAcceptedPayTo, verifyPayTo, { caseInsensitive: true }),
     accepted_amount_matches_verify_price: compareOptionalStrings(paymentAcceptedAmount, verifyPrice),
     accepted_maxAmountRequired_matches_verify_price: compareOptionalStrings(paymentAcceptedMaxAmountRequired, verifyPrice),
+    cdp_payment_payload_keys: arrayOfStrings(verifierDetails?.cdp_payment_payload_keys),
+    cdp_payment_payload_has_scheme: boolOrNull(verifierDetails?.cdp_payment_payload_has_scheme),
+    cdp_payment_payload_scheme: toStringOrNull(verifierDetails?.cdp_payment_payload_scheme),
+    cdp_payment_payload_network: toStringOrNull(verifierDetails?.cdp_payment_payload_network),
+    cdp_payment_payload_stripped_wrapper_fields: boolOrNull(verifierDetails?.cdp_payment_payload_stripped_wrapper_fields),
+    cdp_payment_payload_source: toStringOrNull(verifierDetails?.cdp_payment_payload_source),
     facilitator_provider: toStringOrNull(
       verifierDetails?.facilitator_provider
       ?? fallbackFacilitatorProvider

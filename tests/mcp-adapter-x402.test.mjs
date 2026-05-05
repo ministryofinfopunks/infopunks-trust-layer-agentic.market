@@ -439,6 +439,11 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
 
   assert.equal(postedVerifyBody.x402Version, 2);
   assert.equal(postedVerifyBody.paymentPayload.x402Version, 2);
+  assert.equal(postedVerifyBody.paymentPayload.scheme, "exact");
+  assert.equal(postedVerifyBody.paymentPayload.network, "eip155:8453");
+  assert.equal(Boolean(postedVerifyBody.paymentPayload.payload), true);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), false);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), false);
   assert.deepEqual(postedVerifyBody.paymentRequirements, paymentPayload.accepted);
   assert.equal(postedVerifyBody.paymentRequirements.amount, "10000");
   assert.equal(typeof postedVerifyBody.paymentRequirements.amount, "string");
@@ -538,6 +543,93 @@ test("cdp verifier sends v2 payment shape with top-level x402Version", async (t)
 
   assert.equal(result.ok, true);
   assert.equal(result.nonce, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+});
+
+test("cdp verifier preserves native x402v2 payload with top-level scheme", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedVerifyBody = null;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init?.body ?? "{}");
+    if (String(url).endsWith("/verify")) {
+      postedVerifyBody = body;
+      return new Response(
+        JSON.stringify({
+          isValid: true,
+          verifier_reference: "rcpt_cdp_native_scheme_1",
+          settlement_status: "settled"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: true }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-cred",
+    timeoutMs: 2000,
+    logger: null
+  });
+  verifier.authHeaders = async () => ({});
+
+  const nativePaymentPayload = {
+    x402Version: 2,
+    scheme: "exact",
+    network: "eip155:8453",
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
+    },
+    domain: "preserve_me",
+    resource: "https://should-not-be-forwarded.example",
+    accepted: { scheme: "legacy-wrapper-field" }
+  };
+  const paymentRequirements = {
+    scheme: "exact",
+    network: "eip155:8453",
+    maxAmountRequired: "10000",
+    amount: "10000",
+    asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    maxTimeoutSeconds: 300
+  };
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload: nativePaymentPayload,
+      paymentRequirements
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_native_scheme_cdp",
+    entitlement: null
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(postedVerifyBody.paymentPayload.scheme, "exact");
+  assert.equal(postedVerifyBody.paymentPayload.network, "eip155:8453");
+  assert.equal(postedVerifyBody.paymentPayload.domain, "preserve_me");
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "accepted"), false);
+  assert.equal(Object.hasOwn(postedVerifyBody.paymentPayload, "resource"), false);
 });
 
 test("cdp verifier normalizes nonce/signature byte arrays to hex strings for verify and settle", async (t) => {

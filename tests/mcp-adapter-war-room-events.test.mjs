@@ -375,6 +375,12 @@ test("war room feed includes safe cdp verify error details and accepted comparis
   assert.equal(diagnostics.accepted_payTo_matches_verify_payTo, true);
   assert.equal(diagnostics.accepted_amount_matches_verify_price, true);
   assert.equal(diagnostics.accepted_maxAmountRequired_matches_verify_price, true);
+  assert.deepEqual(diagnostics.cdp_payment_payload_keys.sort(), ["network", "payload", "scheme", "x402Version"]);
+  assert.equal(diagnostics.cdp_payment_payload_has_scheme, true);
+  assert.equal(diagnostics.cdp_payment_payload_scheme, "exact");
+  assert.equal(diagnostics.cdp_payment_payload_network, "eip155:84532");
+  assert.equal(diagnostics.cdp_payment_payload_stripped_wrapper_fields, true);
+  assert.equal(diagnostics.cdp_payment_payload_source, "normalized_from_wrapper");
   assert.equal(Object.hasOwn(diagnostics, "paymentPayload"), false);
   assert.equal(Object.hasOwn(diagnostics, "signature"), false);
   assert.equal(Object.hasOwn(diagnostics, "payment_signature"), false);
