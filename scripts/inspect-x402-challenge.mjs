@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import { __testOnly } from "../services/mcp-adapter/src/transport/http-server.mjs";
-
 function resolveBaseUrl() {
   const raw = String(process.env.PUBLIC_BASE_URL ?? process.env.INFOPUNKS_TRUST_API_URL ?? "").trim();
   if (!raw) {
@@ -34,33 +32,21 @@ async function main() {
   const response = await fetch(endpoint, { method: "POST" });
   const challenge = decodePaymentRequiredHeader(response.headers.get("payment-required"));
   const accept = challenge?.accepts?.[0] ?? {};
-  const bazaar = challenge?.resource?.extensions?.bazaar ?? {};
-  const resourceValue = challenge?.resource?.resource ?? challenge?.resource?.url ?? "";
-  const bazaarValidation = __testOnly.validateBazaarExtension(bazaar);
-  const inputSchemaErrors = __testOnly.validateJsonSchema(
-    bazaar?.info?.input,
-    bazaar?.schema?.properties?.input
-  );
-  const outputSchemaErrors = __testOnly.validateJsonSchema(
-    bazaar?.info?.output,
-    bazaar?.schema?.properties?.output
-  );
+  const resourceValue = challenge?.resource ?? accept?.resource ?? "";
+  const manifestResponse = await fetch(`${baseUrl}/.well-known/infopunks-trust-layer.json`);
+  const manifest = await manifestResponse.json();
+  const manifestBazaar = manifest?.resources?.resolve_trust?.extensions?.bazaar ?? null;
 
   console.log(`status=${response.status}`);
   console.log(`x402Version=${challenge?.x402Version ?? ""}`);
   console.log(`resource=${resourceValue}`);
   console.log(`resource_path=${deriveResourcePath(resourceValue) ?? ""}`);
-  console.log(`description_present=${Boolean(challenge?.resource?.description)}`);
-  console.log(`mimeType_present=${Boolean(challenge?.resource?.mimeType)}`);
-  console.log(`outputSchema_present=${Boolean(challenge?.resource?.outputSchema)}`);
-  console.log(`bazaar_keys=${Object.keys(bazaar).join(",")}`);
-  console.log(`bazaar_official_valid=${bazaarValidation?.valid === true}`);
-  console.log(`bazaar_route_template=${bazaar?.routeTemplate ?? ""}`);
-  console.log(`bazaar_input_valid=${inputSchemaErrors.length === 0}`);
-  console.log(`bazaar_output_valid=${outputSchemaErrors.length === 0}`);
-  console.log(`bazaar_input_required=${(bazaar?.schema?.required ?? []).join(",")}`);
-  console.log(`bazaar_tags=${(bazaar?.info?.tags ?? []).join(",")}`);
-  console.log(`bazaar_category=${bazaar?.info?.category ?? ""}`);
+  console.log(`description_present=${Boolean(accept?.description)}`);
+  console.log(`mimeType_present=${Boolean(accept?.mimeType)}`);
+  console.log(`challenge_extensions_present=${Object.hasOwn(challenge ?? {}, "extensions")}`);
+  console.log(`challenge_bazaar_present=${JSON.stringify(challenge).toLowerCase().includes("bazaar")}`);
+  console.log(`manifest_bazaar_present=${Boolean(manifestBazaar)}`);
+  console.log(`manifest_bazaar_keys=${Object.keys(manifestBazaar ?? {}).join(",")}`);
   console.log(`accept_network=${accept?.network ?? ""}`);
   console.log(`accept_asset=${accept?.asset ?? ""}`);
   console.log(`accept_payTo=${accept?.payTo ?? ""}`);

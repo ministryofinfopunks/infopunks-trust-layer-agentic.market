@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 
-import { __testOnly, createHttpTransport } from "../services/mcp-adapter/src/transport/http-server.mjs";
+import { createHttpTransport } from "../services/mcp-adapter/src/transport/http-server.mjs";
 
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -521,45 +521,20 @@ test("/v1/resolve-trust in cdp mode accepts PAYMENT-SIGNATURE v2 header", async 
     assert.equal(challenge.accepts?.[0]?.extra?.name, "USD Coin");
     assert.equal(challenge.accepts?.[0]?.extra?.version, "2");
     assert.equal(challenge.accepts?.[0]?.extra?.symbol, "USDC");
-    assert.equal(challenge.accepts?.[0]?.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
-    assert.equal(challenge.accepts?.[0]?.resource?.extensions?.bazaar?.info?.input?.type, "http");
-    assert.equal(challenge.resource?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
-    assert.equal(challenge.resource?.mimeType, "application/json");
+    assert.equal(challenge.accepts?.[0]?.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
+    assert.equal(challenge.resource, `http://127.0.0.1:${port}/v1/resolve-trust`);
+    assert.equal(challenge.accepts?.[0]?.mimeType, "application/json");
     assert.equal(
-      challenge.resource?.description,
+      challenge.accepts?.[0]?.description,
       "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
     );
-    assert.equal(challenge.resource?.name, "resolve_trust");
-    assert.equal(challenge.resource?.title, "Resolve Trust");
-    assert.equal(challenge.resource?.provider, "Infopunks");
-    assert.deepEqual(
-      Object.keys(challenge.resource?.extensions?.bazaar ?? {}).sort(),
-      ["info", "schema"]
-    );
-    assert.deepEqual(
-      challenge.resource?.extensions?.bazaar?.info?.input,
-      {
-        type: "http",
-        method: "POST",
-        bodyType: "json",
-        body: {
-          subject_id: "agent_public_paid_proof",
-          context: {
-            action: "execute_task",
-            domain: "agentic_market",
-            capital_at_risk_usd: 1000
-          }
-        }
-      }
-    );
-    assert.deepEqual(
-      challenge.resource?.extensions?.bazaar?.schema?.required,
-      ["input"]
-    );
-    assert.deepEqual(
-      __testOnly.validateBazaarExtension(challenge.resource?.extensions?.bazaar),
-      { valid: true }
-    );
+    assert.equal(Object.hasOwn(challenge, "extensions"), false);
+    assert.equal(JSON.stringify(challenge).toLowerCase().includes("bazaar"), false);
+    assert.equal(JSON.stringify(challenge).includes("inputSchema"), false);
+    assert.equal(JSON.stringify(challenge).includes("outputSchema"), false);
+    const headerBytes = Buffer.byteLength(challengeRaw, "utf8");
+    assert.equal(headerBytes < 8 * 1024, true);
+    assert.equal(headerBytes < 1024, true);
 
     const unpaidEmptyJson = await fetch(`http://127.0.0.1:${port}/v1/resolve-trust`, {
       method: "POST",

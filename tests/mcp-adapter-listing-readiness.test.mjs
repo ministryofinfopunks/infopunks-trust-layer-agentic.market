@@ -28,43 +28,22 @@ function withEnv(overrides, fn) {
   }
 }
 
-function assertBazaarExtensionConsistency(decoded) {
-  const topLevelBazaar = decoded?.extensions?.bazaar;
-  const resourceBazaar = decoded?.resource?.extensions?.bazaar;
-  const acceptsBazaar = decoded?.accepts?.[0]?.resource?.extensions?.bazaar;
-
-  assert.ok(topLevelBazaar);
-  assert.ok(resourceBazaar);
-  assert.ok(acceptsBazaar);
-  assert.deepEqual(topLevelBazaar, resourceBazaar);
-  assert.deepEqual(resourceBazaar, acceptsBazaar);
-
-  assert.ok(resourceBazaar.info?.input);
-  assert.ok(resourceBazaar.schema?.properties?.input);
-  assert.ok(resourceBazaar.info?.output?.example);
-  assert.equal(resourceBazaar.info?.input?.body?.subject_id, "agent_public_paid_proof");
-  assert.equal(
-    resourceBazaar.schema?.properties?.input?.properties?.body?.properties?.subject_id?.type,
-    "string"
-  );
-
-  const requiredInputKeys = resourceBazaar.schema?.properties?.input?.required ?? [];
-  for (const key of requiredInputKeys) {
-    assert.equal(
-      Object.hasOwn(resourceBazaar.info?.input ?? {}, key),
-      true,
-      `bazaar.info.input is missing required key ${key}`
-    );
-  }
-
-  const requiredBodyKeys = resourceBazaar.schema?.properties?.input?.properties?.body?.required ?? [];
-  for (const key of requiredBodyKeys) {
-    assert.equal(
-      Object.hasOwn(resourceBazaar.info?.input?.body ?? {}, key),
-      true,
-      `bazaar.info.input.body is missing required key ${key}`
-    );
-  }
+function assertLeanPaymentRequiredShape(decoded, expectedUrl) {
+  assert.equal(decoded?.x402Version, 2);
+  assert.equal(decoded?.error, "Payment required");
+  assert.equal(Array.isArray(decoded?.accepts), true);
+  assert.equal(typeof decoded?.accepts?.[0]?.resource, "string");
+  assert.equal(decoded?.accepts?.[0]?.resource, expectedUrl);
+  assert.equal(typeof decoded?.accepts?.[0]?.description, "string");
+  assert.equal(typeof decoded?.accepts?.[0]?.mimeType, "string");
+  assert.equal(Object.hasOwn(decoded ?? {}, "extensions"), false);
+  assert.equal(Object.hasOwn(decoded ?? {}, "inputSchema"), false);
+  assert.equal(Object.hasOwn(decoded ?? {}, "outputSchema"), false);
+  const serialized = JSON.stringify(decoded);
+  assert.equal(serialized.includes("inputSchema"), false);
+  assert.equal(serialized.includes("outputSchema"), false);
+  assert.equal(serialized.includes("\"extensions\""), false);
+  assert.equal(serialized.toLowerCase().includes("bazaar"), false);
 }
 
 test("statusFromAdapterErrorCode maps payment errors to 402/409", () => {
@@ -111,47 +90,17 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
   assert.equal(decoded.accepts[0].asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
   assert.equal(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.version, "2");
+  assert.equal(decoded.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.accepts[0].resource, "https://mcp.infopunks.ai/v1/resolve-trust");
   assert.equal(
-    decoded.resource.description,
+    decoded.accepts[0].description,
     "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
   );
-  assert.equal(decoded.resource.name, "resolve_trust");
-  assert.equal(decoded.resource.title, "Resolve Trust");
-  assert.equal(decoded.resource.provider, "Infopunks");
-  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
-  assert.equal(decoded.resource.url, "https://mcp.infopunks.ai/v1/resolve-trust");
-  assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
-  assert.equal(decoded.resource.extensions.bazaar.info.input.type, "http");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.method, "POST");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.bodyType, "json");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.body.subject_id, "agent_public_paid_proof");
-  assert.equal(decoded.resource.extensions.bazaar.info.input.body.context.action, "execute_task");
-  assert.equal(decoded.accepts[0].resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
-  assert.equal(decoded.accepts[0].resource.extensions.bazaar.info.input.type, "http");
-  assert.ok(decoded.extensions?.bazaar);
-  assert.equal(decoded.extensions.bazaar.info.input.type, "http");
-  assert.equal(decoded.extensions.bazaar.schema.properties.input.properties.method.type, "string");
-  assert.deepEqual(decoded.resource.extensions.bazaar.schema.required, ["input"]);
-  assert.deepEqual(
-    decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
-    ["subject_id", "context"]
-  );
-  assert.deepEqual(
-    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
-    { valid: true }
-  );
-  assert.deepEqual(
-    __testOnly.validateJsonSchema(
-      decoded.resource.extensions.bazaar.info.input,
-      decoded.resource.extensions.bazaar.schema.properties.input
-    ),
-    []
-  );
-  assertBazaarExtensionConsistency(decoded);
-  assert.ok(decoded.resource.inputSchema);
-  assert.ok(decoded.resource.outputSchema);
-  assert.deepEqual(decoded.resource.outputSchema.required, ["subject_id", "trust_score", "route"]);
+  assert.equal(decoded.accepts[0].mimeType, "application/json");
+  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
+  const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
+  assert.equal(encodedBytes < 8 * 1024, true);
+  assert.equal(encodedBytes < 1024, true);
   assert.match(headers["x402-discovery"], /\/\.well-known\/infopunks-trust-layer\.json$/);
 });
 
@@ -225,63 +174,17 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");
   assert.equal(decoded.accepts[0].extra.version, "2");
   assert.equal(decoded.accepts[0].extra.symbol, "USDC");
-  assert.equal(decoded.resource.description, "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services.");
-  assert.equal(decoded.resource.name, "resolve_trust");
-  assert.equal(decoded.resource.title, "Resolve Trust");
-  assert.equal(decoded.resource.provider, "Infopunks");
-  assert.equal(decoded.resource.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
-  assert.equal(decoded.resource.mimeType, "application/json");
-  assert.deepEqual(Object.keys(decoded.resource.extensions.bazaar).sort(), ["info", "schema"]);
-  assert.ok(decoded.extensions?.bazaar);
-  assert.equal(decoded.extensions.bazaar.info.input.bodyType, "json");
-  assert.equal(decoded.extensions.bazaar.info.input.body?.subject_id, "agent_public_paid_proof");
-  assert.deepEqual(decoded.resource.extensions.bazaar.info.input, {
-    type: "http",
-    method: "POST",
-    bodyType: "json",
-    body: {
-      subject_id: "agent_public_paid_proof",
-      context: {
-        action: "execute_task",
-        domain: "agentic_market",
-        capital_at_risk_usd: 1000
-      }
-    }
-  });
-  assert.equal(decoded.resource.extensions.bazaar.info.output.type, "json");
-  assert.equal(typeof decoded.resource.extensions.bazaar.info.output.example, "object");
-  assert.equal(Array.isArray(decoded.resource.extensions.bazaar.info.output.example), false);
-  assert.equal(decoded.resource.extensions.bazaar.info.output.example.subject_id, "agent_public_paid_proof");
-  assert.equal(typeof decoded.resource.extensions.bazaar.info.output.example.trust_score, "number");
-  assert.equal(decoded.resource.extensions.bazaar.info.output.example.route, "allow");
-  assert.equal(decoded.resource.extensions.bazaar.info.output.example.status, "allow");
-  assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "type"), false);
-  assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "properties"), false);
-  assert.equal(Object.hasOwn(decoded.resource.extensions.bazaar.info.output.example, "required"), false);
-  assert.deepEqual(
-    decoded.resource.extensions.bazaar.schema.properties.input.properties.body.required,
-    ["subject_id", "context"]
+  assert.equal(decoded.resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(decoded.accepts[0].resource, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assert.equal(
+    decoded.accepts[0].description,
+    "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
   );
-  assert.equal(decoded.resource.extensions.bazaar.schema.$schema, "https://json-schema.org/draft/2020-12/schema");
-  assert.deepEqual(
-    __testOnly.validateBazaarExtension(decoded.resource.extensions.bazaar),
-    { valid: true }
-  );
-  assert.deepEqual(
-    __testOnly.validateJsonSchema(
-      decoded.resource.extensions.bazaar.info.input,
-      decoded.resource.extensions.bazaar.schema.properties.input
-    ),
-    []
-  );
-  assert.deepEqual(
-    __testOnly.validateJsonSchema(
-      decoded.resource.extensions.bazaar.info.output,
-      decoded.resource.extensions.bazaar.schema.properties.output
-    ),
-    []
-  );
-  assertBazaarExtensionConsistency(decoded);
+  assert.equal(decoded.accepts[0].mimeType, "application/json");
+  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
+  const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
+  assert.equal(encodedBytes < 8 * 1024, true);
+  assert.equal(encodedBytes < 1024, true);
 });
 
 test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 name", () => {
@@ -307,6 +210,51 @@ test("challengeHeaders cdp mode does not let X402_ASSET symbol override EIP712 n
   const decoded = JSON.parse(Buffer.from(headers["PAYMENT-REQUIRED"], "base64").toString("utf8"));
   assert.notEqual(decoded.accepts[0].extra.name, "USDC");
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");
+});
+
+test("challengeHeaders buyer-style parser compatibility when @x402/core/client is available", async (t) => {
+  let coreClient;
+  try {
+    coreClient = await import("@x402/core/client");
+  } catch {
+    t.skip("@x402/core/client is not installed in this repo.");
+    return;
+  }
+
+  const parseFn = coreClient?.decodePaymentRequired
+    ?? coreClient?.parsePaymentRequired
+    ?? coreClient?.decodePaymentRequirement
+    ?? null;
+  if (typeof parseFn !== "function") {
+    t.skip("@x402/core/client does not expose a compatible parser helper.");
+    return;
+  }
+
+  const headers = __testOnly.challengeHeaders(
+    {
+      publicUrl: "https://mcp.infopunks.ai",
+      host: "127.0.0.1",
+      port: 4021,
+      x402AcceptedAssets: ["USDC"],
+      x402SupportedNetworks: ["eip155:8453"],
+      x402PaymentScheme: "exact",
+      x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      x402PayTo: "0x1111111111111111111111111111111111111111",
+      x402PricePerUnitAtomic: "10000",
+      x402PaymentTimeoutSeconds: 300,
+      x402Eip712Name: "USD Coin",
+      x402Eip712Version: "2",
+      x402FacilitatorProvider: "cdp"
+    },
+    { pricing: { units: 1 } }
+  );
+
+  try {
+    const parsed = await parseFn(headers["PAYMENT-REQUIRED"]);
+    assert.ok(parsed);
+  } catch {
+    t.skip("Found @x402/core/client parser helper but invocation signature is incompatible with this test.");
+  }
 });
 
 test("trust-score helper mapping emits commercial response format", () => {

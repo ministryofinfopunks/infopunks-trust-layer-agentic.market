@@ -128,47 +128,29 @@ async function main() {
 
   const challenge = decodePaymentRequired(unpaidValid.response.headers.get("payment-required"));
   const challengePaymentRequirement = challenge?.accepts?.[0] ?? null;
-  const bazaarExtension = challenge?.resource?.extensions?.bazaar ?? null;
-  const requirementBazaarExtension = challengePaymentRequirement?.resource?.extensions?.bazaar ?? null;
-  assertCheck(Boolean(bazaarExtension), "402 challenge must include resource.extensions.bazaar.");
-  assertCheck(Boolean(requirementBazaarExtension), "402 challenge must include accepts[0].resource.extensions.bazaar.");
-  assertCheck(
-    challengePaymentRequirement?.resource?.resource === challenge?.resource?.resource,
-    "402 challenge accepts[0].resource.resource must match challenge.resource.resource."
-  );
+  assertCheck(typeof challengePaymentRequirement?.resource === "string", "402 challenge accepts[0].resource must be a URL string.");
+  assertCheck(typeof challengePaymentRequirement?.description === "string", "402 challenge accepts[0].description must be present.");
+  assertCheck(challengePaymentRequirement?.mimeType === "application/json", "402 challenge accepts[0].mimeType must be application/json.");
+  assertCheck(Object.hasOwn(challenge ?? {}, "extensions") === false, "402 challenge must not include extensions payload.");
+  assertCheck(JSON.stringify(challenge).includes("inputSchema") === false, "402 challenge must not include inputSchema.");
+  assertCheck(JSON.stringify(challenge).includes("outputSchema") === false, "402 challenge must not include outputSchema.");
+  assertCheck(JSON.stringify(challenge).toLowerCase().includes("bazaar") === false, "402 challenge must not include Bazaar payload.");
+  const challengeHeaderB64 = unpaidValid.response.headers.get("payment-required") ?? "";
+  assertCheck(Buffer.byteLength(challengeHeaderB64, "utf8") < 8 * 1024, "402 challenge header must be under 8KB.");
 
-  const bazaarInput = requirementBazaarExtension?.info?.input ?? {};
-  assertCheck(bazaarInput?.type === "http", "extensions.bazaar.info.input.type must be http.");
-  assertCheck(bazaarInput?.method === "POST", "extensions.bazaar.info.input.method must be POST.");
-  assertCheck(
-    bazaarInput?.path === "/v1/resolve-trust" || requirementBazaarExtension?.routeTemplate === "/v1/resolve-trust",
-    "extensions.bazaar must include input.path or routeTemplate for /v1/resolve-trust."
-  );
-  assertCheck(bazaarInput?.contentType === "application/json", "extensions.bazaar.info.input.contentType must be application/json.");
-  assertCheck(typeof bazaarInput?.body?.subject_id === "string" && bazaarInput.body.subject_id.length > 0, "extensions.bazaar.info.input.body.subject_id must be a non-empty string.");
-  assertCheck(
-    bazaarInput?.body?.context && typeof bazaarInput.body.context === "object" && !Array.isArray(bazaarInput.body.context),
-    "extensions.bazaar.info.input.body.context must be an object."
-  );
-  const bazaarOutput = requirementBazaarExtension?.info?.output ?? {};
-  assertCheck(bazaarOutput?.type === "json", "extensions.bazaar.info.output.type must be json.");
-  assertCheck(typeof bazaarOutput?.example?.subject_id === "string", "extensions.bazaar.info.output.example.subject_id must be present.");
-  assertCheck(typeof bazaarOutput?.example?.trust_score === "number", "extensions.bazaar.info.output.example.trust_score must be numeric.");
-  assertCheck(bazaarOutput?.example?.status === "allow" || bazaarOutput?.example?.status === "degrade" || bazaarOutput?.example?.status === "block" || bazaarOutput?.example?.status === "quarantine", "extensions.bazaar.info.output.example.status must be a valid trust route.");
-  assertCheck(
-    bazaarOutput?.example?.receipt && typeof bazaarOutput.example.receipt === "object",
-    "extensions.bazaar.info.output.example.receipt must be present."
-  );
+  const manifest = await request(`${baseUrl}/.well-known/infopunks-trust-layer.json`, {
+    method: "GET",
+    headers: { accept: "application/json" }
+  });
+  assertCheck(manifest.response.status === 200, "manifest endpoint must be reachable.");
+  const manifestBazaar = manifest.json?.resources?.resolve_trust?.extensions?.bazaar ?? null;
+  assertCheck(Boolean(manifestBazaar), "manifest must include rich Bazaar metadata for resolve_trust.");
 
   const { paymentHeaderB64, bodyPayment } = normalizePaymentInput(challenge);
   const requirementsUsedForPayment = paymentHeaderB64
     ? decodePaymentSignatureHeader(paymentHeaderB64)?.accepted ?? null
     : bodyPayment?.paymentRequirements ?? null;
   assertCheck(Boolean(requirementsUsedForPayment), "Paid flow must preserve payment requirements from challenge.");
-  assertCheck(
-    Boolean(requirementsUsedForPayment?.resource?.extensions?.bazaar),
-    "Paid flow must include payment requirements with resource.extensions.bazaar."
-  );
   const paidBody = bodyPayment ? { ...baseBody, payment: bodyPayment } : baseBody;
   const paidHeaders = {
     "content-type": "application/json",
@@ -229,10 +211,9 @@ async function main() {
       unpaid_valid_body_402: true,
       unpaid_empty_body_402: true,
       unpaid_no_body_402: true,
-      challenge_includes_extensions_bazaar: true,
-      challenge_accepts_requirement_includes_extensions_bazaar: true,
-      challenge_bazaar_extension_shape_valid: true,
-      paid_flow_preserves_bazaar_extensions_in_payment_requirements: true,
+      challenge_lean_shape_valid: true,
+      challenge_excludes_bazaar_metadata: true,
+      manifest_includes_bazaar_metadata: true,
       paid_receipt_facilitator_provider_cdp: true,
       paid_receipt_x402_verified_true: true,
       receipt_has_extension_responses_diagnostics: true,

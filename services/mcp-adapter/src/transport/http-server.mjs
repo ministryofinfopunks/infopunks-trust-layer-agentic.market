@@ -441,11 +441,13 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
     }
   }
 
-  const resource = routeResourceMetadata(config, toolDef, resourcePath);
+  const resourceUrlValue = resourceUrl(config, resourcePath);
+  const description = routeDescription(resourcePath, toolDef);
+  const mimeType = "application/json";
   return {
     x402Version: 2,
     error: "Payment required",
-    resource,
+    resource: resourceUrlValue,
     accepts: [
       {
         scheme: config.x402PaymentScheme ?? "exact",
@@ -454,13 +456,12 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
         asset: config.x402PaymentAssetAddress,
         payTo: config.x402PayTo,
         maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
-        resource,
+        resource: resourceUrlValue,
+        description,
+        mimeType,
         ...(Object.keys(extra).length > 0 ? { extra } : {})
       }
-    ],
-    extensions: {
-      bazaar: RESOLVE_TRUST_BAZAAR_EXTENSION
-    }
+    ]
   };
 }
 
@@ -482,6 +483,9 @@ function challengeHeaders(config, toolDef, resourcePath = "/v1/resolve-trust") {
 }
 
 function hasBazaarExtensionInResource(resource) {
+  if (typeof resource === "string") {
+    return false;
+  }
   return Boolean(resource?.extensions?.bazaar);
 }
 
