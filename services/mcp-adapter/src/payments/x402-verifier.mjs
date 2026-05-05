@@ -237,6 +237,7 @@ function logCdpFacilitatorPayloadShape({ logger, phase, payload }) {
     req_network: paymentRequirements?.network ?? null,
     req_asset: paymentRequirements?.asset ?? null,
     req_payTo: paymentRequirements?.payTo ?? null,
+    req_maxAmountRequired: paymentRequirements?.maxAmountRequired ?? null,
     req_amount: paymentRequirements?.amount ?? null,
     req_maxTimeoutSeconds: paymentRequirements?.maxTimeoutSeconds ?? null,
     req_has_bazaar_extension: hasBazaarExtensionInPaymentRequirements(paymentRequirements),

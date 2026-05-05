@@ -417,7 +417,7 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   };
 }
 
-function canonicalPaymentRequirement(config, toolDef, resourcePath, amount) {
+function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountRequired) {
   const network = normalizeNetworkToCaip2((config.x402SupportedNetworks ?? [])[0] ?? "eip155:84532");
   const tokenMetadata = resolveExactEvmTokenMetadata({
     network,
@@ -459,7 +459,7 @@ function canonicalPaymentRequirement(config, toolDef, resourcePath, amount) {
   return {
     scheme: config.x402PaymentScheme ?? "exact",
     network,
-    amount: String(amount),
+    maxAmountRequired: String(maxAmountRequired),
     asset: config.x402PaymentAssetAddress,
     payTo: config.x402PayTo,
     maxTimeoutSeconds: Number(config.x402PaymentTimeoutSeconds ?? 300),
@@ -535,6 +535,10 @@ function paymentFromHeaderSelection(selection) {
     return null;
   }
   const accepted = decodedPayload?.accepted ?? null;
+  const decodedPayloadKeys = Object.keys(decodedPayload ?? {});
+  const verifyRequirementKeys = accepted && typeof accepted === "object"
+    ? Object.keys(accepted)
+    : [];
   return {
     rail: "x402",
     payer: extractPayerFromPayload(decodedPayload),
@@ -550,7 +554,11 @@ function paymentFromHeaderSelection(selection) {
       selected_header: selection?.selectedHeader ?? "none",
       selected_header_bytes: selection?.selectedHeaderBytes ?? 0,
       selected_payload_decoded: true,
-      headers_differ: selection?.headersDiffer ?? false
+      headers_differ: selection?.headersDiffer ?? false,
+      decoded_payload_keys: decodedPayloadKeys,
+      verify_requirement_keys: verifyRequirementKeys,
+      has_maxAmountRequired: Object.hasOwn(accepted ?? {}, "maxAmountRequired"),
+      has_amount: Object.hasOwn(accepted ?? {}, "amount")
     }
   };
 }
@@ -1710,6 +1718,10 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         payment_signature_present: headerSelection.paymentSignaturePresent,
         selected_header_bytes: headerSelection.selectedHeaderBytes,
         selected_payload_decoded: Boolean(headerPayment?.paymentPayload),
+        decoded_payload_keys: headerPayment?.payment_header_diagnostics?.decoded_payload_keys ?? [],
+        verify_requirement_keys: headerPayment?.payment_header_diagnostics?.verify_requirement_keys ?? [],
+        has_maxAmountRequired: headerPayment?.payment_header_diagnostics?.has_maxAmountRequired ?? false,
+        has_amount: headerPayment?.payment_header_diagnostics?.has_amount ?? false,
         headers_differ: headerSelection.headersDiffer
       });
       if (headerSelection.headersDiffer) {
@@ -1926,18 +1938,27 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator",
             network: canonicalRequirement?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
             payTo: canonicalRequirement?.payTo ?? config.x402PayTo ?? null,
-            price: canonicalRequirement?.amount ?? config.x402PricePerUnitAtomic ?? null,
+            price: canonicalRequirement?.maxAmountRequired ?? canonicalRequirement?.amount ?? config.x402PricePerUnitAtomic ?? null,
             payment_header_selected: headerSelection.selectedHeader,
             x_payment_present: headerSelection.xPaymentPresent,
             payment_signature_present: headerSelection.paymentSignaturePresent,
             selected_header_bytes: headerSelection.selectedHeaderBytes,
             header_payload_decoded: Boolean(headerPayment?.paymentPayload),
+            header_payload_top_level_keys: headerPayment?.payment_header_diagnostics?.decoded_payload_keys ?? [],
+            verify_requirement_keys: headerPayment?.payment_header_diagnostics?.verify_requirement_keys ?? [],
+            requirement_has_maxAmountRequired: headerPayment?.payment_header_diagnostics?.has_maxAmountRequired ?? false,
+            requirement_has_amount: headerPayment?.payment_header_diagnostics?.has_amount ?? false,
             verify_requirements_resource: canonicalRequirement?.resource ?? null,
+            verify_requirements_maxAmountRequired: canonicalRequirement?.maxAmountRequired ?? null,
             verify_requirements_amount: canonicalRequirement?.amount ?? null,
             verify_requirements_network: canonicalRequirement?.network ?? null,
             verify_requirements_asset: canonicalRequirement?.asset ?? null,
             verify_requirements_payTo: canonicalRequirement?.payTo ?? null,
             facilitator_verify_http_status: errorEnvelope?.error?.details?.status ?? null,
+            facilitator_verify_response_body: verifierBody ?? null,
+            facilitator_verify_response_body_keys: verifierBody && typeof verifierBody === "object"
+              ? Object.keys(verifierBody)
+              : [],
             facilitator_verify_invalidReason: verifierBody?.invalidReason ?? verifierBody?.reason ?? null,
             facilitator_verify_invalidMessage: verifierBody?.invalidMessage ?? verifierBody?.message ?? null,
             ...(statusCode === 402

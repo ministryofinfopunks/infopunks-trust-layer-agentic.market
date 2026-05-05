@@ -272,15 +272,22 @@ export class EntitlementService {
         ...(verification.details ?? {}),
         facilitator_provider: this.config.x402FacilitatorProvider ?? "openfacilitator",
         verify_requirements_resource: payment?.paymentRequirements?.resource ?? null,
+        verify_requirements_maxAmountRequired: payment?.paymentRequirements?.maxAmountRequired ?? null,
         verify_requirements_amount: payment?.paymentRequirements?.amount ?? null,
         verify_requirements_network: payment?.paymentRequirements?.network ?? null,
         verify_requirements_asset: payment?.paymentRequirements?.asset ?? null,
         verify_requirements_payTo: payment?.paymentRequirements?.payTo ?? null,
+        verify_requirement_keys: payment?.paymentRequirements && typeof payment.paymentRequirements === "object"
+          ? Object.keys(payment.paymentRequirements)
+          : [],
         payment_header_selected: paymentHeaderDiagnostics.selected_header ?? payment?.payment_header_used ?? null,
         x_payment_present: paymentHeaderDiagnostics.x_payment_present ?? null,
         payment_signature_present: paymentHeaderDiagnostics.payment_signature_present ?? null,
         selected_header_bytes: paymentHeaderDiagnostics.selected_header_bytes ?? null,
         header_payload_decoded: paymentHeaderDiagnostics.selected_payload_decoded ?? null,
+        header_payload_top_level_keys: paymentHeaderDiagnostics.decoded_payload_keys ?? [],
+        requirement_has_maxAmountRequired: paymentHeaderDiagnostics.has_maxAmountRequired ?? null,
+        requirement_has_amount: paymentHeaderDiagnostics.has_amount ?? null,
         header_values_differ: paymentHeaderDiagnostics.headers_differ ?? null
       };
       this.logger?.warn?.({

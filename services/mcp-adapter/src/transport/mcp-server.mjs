@@ -587,7 +587,9 @@ export class McpServer {
             ?? this.config.x402PayTo
             ?? null,
           price: billing?.x402_receipt?.price
+            ?? args?.payment?.paymentRequirements?.maxAmountRequired
             ?? args?.payment?.paymentRequirements?.amount
+            ?? verifierDetails?.verify_requirements_maxAmountRequired
             ?? verifierDetails?.verify_requirements_amount
             ?? this.config.x402Price
             ?? this.config.x402PricePerUnitAtomic

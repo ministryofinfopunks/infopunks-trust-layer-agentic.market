@@ -28,10 +28,12 @@ function withEnv(overrides, fn) {
   }
 }
 
-function assertLeanPaymentRequiredShape(decoded, expectedUrl) {
+function assertLeanPaymentRequiredShape(decoded, expectedUrl, expectedMaxAmountRequired = "10000") {
   assert.equal(decoded?.x402Version, 2);
   assert.equal(decoded?.error, "Payment required");
   assert.equal(Array.isArray(decoded?.accepts), true);
+  assert.equal(decoded?.accepts?.[0]?.maxAmountRequired, String(expectedMaxAmountRequired));
+  assert.equal(Object.hasOwn(decoded?.accepts?.[0] ?? {}, "amount"), false);
   assert.equal(typeof decoded?.accepts?.[0]?.resource, "string");
   assert.equal(decoded?.accepts?.[0]?.resource, expectedUrl);
   assert.equal(typeof decoded?.accepts?.[0]?.description, "string");
@@ -97,7 +99,7 @@ test("challengeHeaders include discovery, pricing and payment rails", () => {
     "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
   );
   assert.equal(decoded.accepts[0].mimeType, "application/json");
-  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust", "20000");
   const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
   assert.equal(encodedBytes < 8 * 1024, true);
   assert.equal(encodedBytes < 1536, true);
@@ -168,7 +170,8 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
   assert.equal(decoded.x402Version, 2);
   assert.equal(decoded.accepts[0].scheme, "exact");
   assert.equal(decoded.accepts[0].network, "eip155:8453");
-  assert.equal(decoded.accepts[0].amount, "10000");
+  assert.equal(decoded.accepts[0].maxAmountRequired, "10000");
+  assert.equal(Object.hasOwn(decoded.accepts[0], "amount"), false);
   assert.equal(decoded.accepts[0].asset, "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913");
   assert.equal(decoded.accepts[0].payTo, "0x1111111111111111111111111111111111111111");
   assert.equal(decoded.accepts[0].extra.name, "USD Coin");
@@ -181,7 +184,7 @@ test("challengeHeaders in cdp mode uses EIP712 env name/version for Base mainnet
     "Resolve real-time trust, policy status, and routing decisions for agents, wallets, executors, and services."
   );
   assert.equal(decoded.accepts[0].mimeType, "application/json");
-  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust");
+  assertLeanPaymentRequiredShape(decoded, "https://mcp.infopunks.ai/v1/resolve-trust", "10000");
   const encodedBytes = Buffer.byteLength(headers["PAYMENT-REQUIRED"], "utf8");
   assert.equal(encodedBytes < 8 * 1024, true);
   assert.equal(encodedBytes < 1536, true);
