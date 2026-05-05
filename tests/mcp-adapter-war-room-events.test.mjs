@@ -245,6 +245,17 @@ test("war room feed records failed payment event", async (t) => {
   assert.equal(failed.network, "eip155:84532");
   assert.equal(failed.payTo, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
   assert.equal(failed.price, "10000");
+  assert.ok(failed.x402_diagnostics);
+  assert.ok(typeof failed.x402_diagnostics.selected_payment_header === "string");
+  assert.equal(Array.isArray(failed.x402_diagnostics.verify_requirement_keys), true);
+  assert.equal(failed.x402_diagnostics.has_maxAmountRequired, true);
+  assert.equal(failed.x402_diagnostics.facilitator_provider, "openfacilitator");
+  assert.equal(Object.hasOwn(failed.x402_diagnostics, "paymentPayload"), false);
+  assert.equal(Object.hasOwn(failed.x402_diagnostics, "signature"), false);
+  assert.equal(Object.hasOwn(failed.x402_diagnostics, "payment_signature"), false);
+  const serializedDiagnostics = JSON.stringify(failed.x402_diagnostics).toLowerCase();
+  assert.equal(serializedDiagnostics.includes("private_key"), false);
+  assert.equal(serializedDiagnostics.includes("cdp_api_key"), false);
 });
 
 test("war room frontend script syntax check passes", () => {

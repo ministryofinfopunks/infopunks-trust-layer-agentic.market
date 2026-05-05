@@ -251,14 +251,14 @@ export class AdapterStateStore {
           event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
           mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
           network, pay_to, price, amount, error_code, reason,
-          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw, x402_diagnostics_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       listWarRoomEvents: this.db.prepare(`
         SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
                mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
                network, pay_to, price, amount, error_code, reason,
-               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
+               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw, x402_diagnostics_json
         FROM war_room_events
         ORDER BY timestamp DESC
         LIMIT ?
@@ -428,7 +428,8 @@ export class AdapterStateStore {
         reason TEXT,
         bazaar_extension_status TEXT,
         bazaar_extension_reason TEXT,
-        bazaar_extension_raw TEXT
+        bazaar_extension_raw TEXT,
+        x402_diagnostics_json TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
@@ -448,7 +449,8 @@ export class AdapterStateStore {
       ["price", "TEXT"],
       ["bazaar_extension_status", "TEXT"],
       ["bazaar_extension_reason", "TEXT"],
-      ["bazaar_extension_raw", "TEXT"]
+      ["bazaar_extension_raw", "TEXT"],
+      ["x402_diagnostics_json", "TEXT"]
     ]) {
       try {
         this.db.exec(`ALTER TABLE war_room_events ADD COLUMN ${column[0]} ${column[1]};`);
@@ -628,7 +630,10 @@ export class AdapterStateStore {
       reason: event.reason ?? null,
       bazaar_extension_status: event.bazaar_extension_status ?? null,
       bazaar_extension_reason: event.bazaar_extension_reason ?? null,
-      bazaar_extension_raw: event.bazaar_extension_raw ?? null
+      bazaar_extension_raw: event.bazaar_extension_raw ?? null,
+      x402_diagnostics: event.x402_diagnostics && typeof event.x402_diagnostics === "object"
+        ? event.x402_diagnostics
+        : null
     };
     this.stmt.insertWarRoomEvent.run(
       normalized.event_id,
@@ -653,14 +658,18 @@ export class AdapterStateStore {
       normalized.reason,
       normalized.bazaar_extension_status,
       normalized.bazaar_extension_reason,
-      normalized.bazaar_extension_raw
+      normalized.bazaar_extension_raw,
+      toJson(normalized.x402_diagnostics)
     );
     return normalized;
   }
 
   listWarRoomEvents(limit = 50) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
-    return this.stmt.listWarRoomEvents.all(safeLimit);
+    return this.stmt.listWarRoomEvents.all(safeLimit).map((entry) => ({
+      ...entry,
+      x402_diagnostics: fromJson(entry.x402_diagnostics_json, null)
+    }));
   }
 
   assertNotReplay({ nonce, proofId, sessionId, payer, toolName, replayWindowSeconds, verifierReference }) {

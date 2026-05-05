@@ -1156,6 +1156,7 @@ function sanitizePublicEvent(event = {}) {
   const bazaarStatus = event.bazaar_extension_status ?? null;
   const normalizedBazaarStatus = typeof bazaarStatus === "string" && bazaarStatus.trim() ? bazaarStatus : "missing";
   const bazaarReason = event.bazaar_extension_reason ?? null;
+  const x402Diagnostics = sanitizePublicX402Diagnostics(event?.x402_diagnostics);
   return {
     event_id: event.event_id ?? null,
     event_type: event.event_type ?? null,
@@ -1178,7 +1179,61 @@ function sanitizePublicEvent(event = {}) {
     bazaar_extension_reason: normalizedBazaarStatus === "missing" && !bazaarReason
       ? MISSING_EXTENSION_RESPONSES_REASON
       : bazaarReason,
-    bazaar_extension_raw: event.bazaar_extension_raw ?? null
+    bazaar_extension_raw: event.bazaar_extension_raw ?? null,
+    x402_diagnostics: x402Diagnostics
+  };
+}
+
+function toSafeString(value) {
+  if (value == null) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function toSafeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => toSafeString(entry))
+    .filter((entry) => entry !== null);
+}
+
+function toSafeBoolean(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
+function sanitizePublicX402Diagnostics(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return {
+    selected_payment_header: toSafeString(value.selected_payment_header) ?? "none",
+    x_payment_present: toSafeBoolean(value.x_payment_present),
+    payment_signature_present: toSafeBoolean(value.payment_signature_present),
+    selected_header_bytes: Number.isFinite(Number(value.selected_header_bytes)) ? Number(value.selected_header_bytes) : null,
+    payment_payload_decode_success: toSafeBoolean(value.payment_payload_decode_success),
+    decoded_payload_top_level_keys: toSafeStringArray(value.decoded_payload_top_level_keys),
+    verify_requirement_keys: toSafeStringArray(value.verify_requirement_keys),
+    has_amount: toSafeBoolean(value.has_amount),
+    has_maxAmountRequired: toSafeBoolean(value.has_maxAmountRequired),
+    amount_equals_maxAmountRequired: toSafeBoolean(value.amount_equals_maxAmountRequired),
+    verify_resource: toSafeString(value.verify_resource),
+    verify_network: toSafeString(value.verify_network),
+    verify_asset: toSafeString(value.verify_asset),
+    verify_payTo: toSafeString(value.verify_payTo),
+    verify_price: toSafeString(value.verify_price),
+    facilitator_provider: toSafeString(value.facilitator_provider),
+    facilitator_verify_status: Number.isFinite(Number(value.facilitator_verify_status))
+      ? Number(value.facilitator_verify_status)
+      : null,
+    facilitator_verify_body_keys: toSafeStringArray(value.facilitator_verify_body_keys),
+    facilitator_invalidReason: toSafeString(value.facilitator_invalidReason),
+    facilitator_invalidMessage: toSafeString(value.facilitator_invalidMessage),
+    sanitized_exception_name: toSafeString(value.sanitized_exception_name),
+    sanitized_exception_message: toSafeString(value.sanitized_exception_message)
   };
 }
 

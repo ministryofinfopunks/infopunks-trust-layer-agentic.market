@@ -195,7 +195,8 @@ export class PostgresAdapterStateStore {
         reason TEXT,
         bazaar_extension_status TEXT,
         bazaar_extension_reason TEXT,
-        bazaar_extension_raw TEXT
+        bazaar_extension_raw TEXT,
+        x402_diagnostics_json TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_war_room_events_timestamp ON war_room_events(timestamp DESC);
     `);
@@ -209,7 +210,8 @@ export class PostgresAdapterStateStore {
       ["price", "TEXT"],
       ["bazaar_extension_status", "TEXT"],
       ["bazaar_extension_reason", "TEXT"],
-      ["bazaar_extension_raw", "TEXT"]
+      ["bazaar_extension_raw", "TEXT"],
+      ["x402_diagnostics_json", "TEXT"]
     ]) {
       await this.pool.query(`ALTER TABLE war_room_events ADD COLUMN IF NOT EXISTS ${column} ${type}`);
     }
@@ -389,7 +391,10 @@ export class PostgresAdapterStateStore {
       reason: event.reason ?? null,
       bazaar_extension_status: event.bazaar_extension_status ?? null,
       bazaar_extension_reason: event.bazaar_extension_reason ?? null,
-      bazaar_extension_raw: event.bazaar_extension_raw ?? null
+      bazaar_extension_raw: event.bazaar_extension_raw ?? null,
+      x402_diagnostics: event.x402_diagnostics && typeof event.x402_diagnostics === "object"
+        ? event.x402_diagnostics
+        : null
     };
 
     await this.pool.query(
@@ -398,8 +403,8 @@ export class PostgresAdapterStateStore {
           event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
           mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
           network, pay_to, price, amount, error_code, reason,
-          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+          bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw, x402_diagnostics_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       `,
       [
         normalized.event_id,
@@ -424,7 +429,8 @@ export class PostgresAdapterStateStore {
         normalized.reason,
         normalized.bazaar_extension_status,
         normalized.bazaar_extension_reason,
-        normalized.bazaar_extension_raw
+        normalized.bazaar_extension_raw,
+        toJson(normalized.x402_diagnostics)
       ]
     );
 
@@ -438,14 +444,17 @@ export class PostgresAdapterStateStore {
         SELECT event_id, event_type, timestamp, payer, subject_id, trust_score, trust_tier,
                mode, confidence, status, route, risk_level, receipt_id, facilitator_provider,
                network, pay_to, price, amount, error_code, reason,
-               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw
+               bazaar_extension_status, bazaar_extension_reason, bazaar_extension_raw, x402_diagnostics_json
         FROM war_room_events
         ORDER BY timestamp DESC
         LIMIT $1
       `,
       [safeLimit]
     );
-    return result.rows;
+    return result.rows.map((entry) => ({
+      ...entry,
+      x402_diagnostics: fromJson(entry.x402_diagnostics_json, null)
+    }));
   }
 
   async spendState(payer) {

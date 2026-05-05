@@ -87,6 +87,104 @@ function normalizeTimestamp(value) {
   return null;
 }
 
+function toStringOrNull(value) {
+  if (value == null) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function arrayOfStrings(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => toStringOrNull(entry))
+    .filter((entry) => entry !== null);
+}
+
+function boolOrNull(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+function buildX402FailureDiagnostics({ args = {}, verifierDetails = {}, verifierBody = {}, error = {}, fallbackFacilitatorProvider = null }) {
+  const payment = args?.payment ?? {};
+  const paymentRequirements = payment?.paymentRequirements ?? {};
+  const selectedHeader = toStringOrNull(
+    verifierDetails?.payment_header_selected
+    ?? payment?.payment_header_diagnostics?.selected_header
+    ?? payment?.payment_header_used
+    ?? "none"
+  ) ?? "none";
+  const xPaymentPresent = verifierDetails?.x_payment_present
+    ?? payment?.payment_header_diagnostics?.x_payment_present
+    ?? null;
+  const paymentSignaturePresent = verifierDetails?.payment_signature_present
+    ?? payment?.payment_header_diagnostics?.payment_signature_present
+    ?? null;
+  const selectedHeaderBytes = Number.isFinite(Number(
+    verifierDetails?.selected_header_bytes ?? payment?.payment_header_diagnostics?.selected_header_bytes
+  ))
+    ? Number(verifierDetails?.selected_header_bytes ?? payment?.payment_header_diagnostics?.selected_header_bytes)
+    : null;
+  const payloadDecodeSuccess = verifierDetails?.header_payload_decoded
+    ?? payment?.payment_header_diagnostics?.selected_payload_decoded
+    ?? null;
+  const verifyRequirementKeys = arrayOfStrings(
+    verifierDetails?.verify_requirement_keys
+    ?? (paymentRequirements && typeof paymentRequirements === "object" ? Object.keys(paymentRequirements) : [])
+  );
+  const hasAmount = verifierDetails?.requirement_has_amount
+    ?? (paymentRequirements && typeof paymentRequirements === "object" ? Object.hasOwn(paymentRequirements, "amount") : null);
+  const hasMaxAmountRequired = verifierDetails?.requirement_has_maxAmountRequired
+    ?? (paymentRequirements && typeof paymentRequirements === "object" ? Object.hasOwn(paymentRequirements, "maxAmountRequired") : null);
+  const verifyAmount = paymentRequirements?.amount ?? verifierDetails?.verify_requirements_amount ?? null;
+  const verifyMaxAmountRequired = paymentRequirements?.maxAmountRequired ?? verifierDetails?.verify_requirements_maxAmountRequired ?? null;
+  const amountEqualsMaxAmountRequired = verifyAmount != null && verifyMaxAmountRequired != null
+    ? String(verifyAmount) === String(verifyMaxAmountRequired)
+    : null;
+  const facilitatorVerifyBodyKeys = arrayOfStrings(
+    verifierDetails?.facilitator_verify_response_body_keys
+    ?? (verifierBody && typeof verifierBody === "object" ? Object.keys(verifierBody) : [])
+  );
+  return {
+    selected_payment_header: selectedHeader,
+    x_payment_present: boolOrNull(xPaymentPresent),
+    payment_signature_present: boolOrNull(paymentSignaturePresent),
+    selected_header_bytes: selectedHeaderBytes,
+    payment_payload_decode_success: boolOrNull(payloadDecodeSuccess),
+    decoded_payload_top_level_keys: arrayOfStrings(verifierDetails?.header_payload_top_level_keys),
+    verify_requirement_keys: verifyRequirementKeys,
+    has_amount: boolOrNull(hasAmount),
+    has_maxAmountRequired: boolOrNull(hasMaxAmountRequired),
+    amount_equals_maxAmountRequired: boolOrNull(amountEqualsMaxAmountRequired),
+    verify_resource: toStringOrNull(paymentRequirements?.resource ?? verifierDetails?.verify_requirements_resource),
+    verify_network: toStringOrNull(paymentRequirements?.network ?? verifierDetails?.verify_requirements_network),
+    verify_asset: toStringOrNull(paymentRequirements?.asset ?? verifierDetails?.verify_requirements_asset),
+    verify_payTo: toStringOrNull(paymentRequirements?.payTo ?? verifierDetails?.verify_requirements_payTo),
+    verify_price: toStringOrNull(
+      paymentRequirements?.maxAmountRequired
+      ?? paymentRequirements?.amount
+      ?? verifierDetails?.verify_requirements_maxAmountRequired
+      ?? verifierDetails?.verify_requirements_amount
+    ),
+    facilitator_provider: toStringOrNull(
+      verifierDetails?.facilitator_provider
+      ?? fallbackFacilitatorProvider
+    ),
+    facilitator_verify_status: Number.isFinite(Number(verifierDetails?.status)) ? Number(verifierDetails.status) : null,
+    facilitator_verify_body_keys: facilitatorVerifyBodyKeys,
+    facilitator_invalidReason: toStringOrNull(verifierBody?.invalidReason ?? verifierBody?.reason ?? verifierDetails?.facilitator_verify_invalidReason),
+    facilitator_invalidMessage: toStringOrNull(verifierBody?.invalidMessage ?? verifierBody?.message ?? verifierDetails?.facilitator_verify_invalidMessage),
+    sanitized_exception_name: toStringOrNull(error?.name),
+    sanitized_exception_message: toStringOrNull(error?.message)
+  };
+}
+
 function extractRequestGuard(args = {}, operation) {
   const payment = args.payment ?? {};
   const nonce = payment?.nonce
@@ -567,6 +665,13 @@ export class McpServer {
           : code === "PAYMENT_VERIFICATION_FAILED" || code === "PAYMENT_SESSION_EXPIRED"
             ? "paid_call.payment_failed"
             : "paid_call.failed";
+        const x402Diagnostics = buildX402FailureDiagnostics({
+          args,
+          verifierDetails,
+          verifierBody,
+          error,
+          fallbackFacilitatorProvider: billing?.x402_receipt?.facilitator_provider ?? this.config.x402FacilitatorProvider ?? "openfacilitator"
+        });
         await this.recordWarRoomEvent({
           event_type: eventType,
           timestamp: new Date().toISOString(),
@@ -598,7 +703,14 @@ export class McpServer {
           reason: error?.message ?? null,
           facilitator_verify_http_status: verifierDetails?.status ?? null,
           facilitator_verify_invalidReason: verifierBody?.invalidReason ?? verifierBody?.reason ?? null,
-          facilitator_verify_invalidMessage: verifierBody?.invalidMessage ?? verifierBody?.message ?? null
+          facilitator_verify_invalidMessage: verifierBody?.invalidMessage ?? verifierBody?.message ?? null,
+          x402_diagnostics: x402Diagnostics
+        });
+        this.logger?.warn?.({
+          event: "payment_failed_x402_diagnostics",
+          subject_id: args?.subject_id ?? null,
+          error_code: code,
+          x402_diagnostics: x402Diagnostics
         });
         this.logger?.warn?.({
           event: "paid_call_event",

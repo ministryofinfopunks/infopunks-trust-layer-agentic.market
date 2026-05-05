@@ -30,6 +30,49 @@ function normalizeTimestamp(value) {
   return new Date(parsed).toISOString();
 }
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => normalizeString(entry))
+    .filter((entry) => entry !== null);
+}
+
+function normalizeBoolean(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
+function normalizeX402Diagnostics(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return {
+    selected_payment_header: normalizeString(value.selected_payment_header) ?? "none",
+    x_payment_present: normalizeBoolean(value.x_payment_present),
+    payment_signature_present: normalizeBoolean(value.payment_signature_present),
+    selected_header_bytes: normalizeNumber(value.selected_header_bytes),
+    payment_payload_decode_success: normalizeBoolean(value.payment_payload_decode_success),
+    decoded_payload_top_level_keys: normalizeStringArray(value.decoded_payload_top_level_keys),
+    verify_requirement_keys: normalizeStringArray(value.verify_requirement_keys),
+    has_amount: normalizeBoolean(value.has_amount),
+    has_maxAmountRequired: normalizeBoolean(value.has_maxAmountRequired),
+    amount_equals_maxAmountRequired: normalizeBoolean(value.amount_equals_maxAmountRequired),
+    verify_resource: normalizeString(value.verify_resource),
+    verify_network: normalizeString(value.verify_network),
+    verify_asset: normalizeString(value.verify_asset),
+    verify_payTo: normalizeString(value.verify_payTo),
+    verify_price: normalizeString(value.verify_price),
+    facilitator_provider: normalizeString(value.facilitator_provider),
+    facilitator_verify_status: normalizeNumber(value.facilitator_verify_status),
+    facilitator_verify_body_keys: normalizeStringArray(value.facilitator_verify_body_keys),
+    facilitator_invalidReason: normalizeString(value.facilitator_invalidReason),
+    facilitator_invalidMessage: normalizeString(value.facilitator_invalidMessage),
+    sanitized_exception_name: normalizeString(value.sanitized_exception_name),
+    sanitized_exception_message: normalizeString(value.sanitized_exception_message)
+  };
+}
+
 function normalizeEvent(event = {}) {
   return {
     event_id: normalizeString(event.event_id) ?? `wre_${randomUUID()}`,
@@ -54,7 +97,8 @@ function normalizeEvent(event = {}) {
     reason: normalizeString(event.reason),
     bazaar_extension_status: normalizeString(event.bazaar_extension_status),
     bazaar_extension_reason: normalizeString(event.bazaar_extension_reason),
-    bazaar_extension_raw: normalizeString(event.bazaar_extension_raw)
+    bazaar_extension_raw: normalizeString(event.bazaar_extension_raw),
+    x402_diagnostics: normalizeX402Diagnostics(event.x402_diagnostics)
   };
 }
 
