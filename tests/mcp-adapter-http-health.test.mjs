@@ -584,7 +584,19 @@ test("/v1/resolve-trust in cdp mode uses lean canonical requirements and prefers
     assert.equal(capturedPayment?.paymentRequirements?.maxAmountRequired, "10000");
     assert.equal(typeof capturedPayment?.paymentRequirements?.maxAmountRequired, "string");
     assert.equal(Object.hasOwn(capturedPayment?.paymentRequirements ?? {}, "amount"), false);
-    assert.deepEqual(capturedPayment?.paymentRequirements, challenge.accepts?.[0]);
+    assert.deepEqual(
+      {
+        ...capturedPayment?.paymentRequirements,
+        extensions: undefined
+      },
+      {
+        ...challenge.accepts?.[0],
+        extensions: undefined
+      }
+    );
+    assert.equal(typeof capturedPayment?.paymentRequirements?.extensions?.bazaar, "object");
+    assert.equal(capturedPayment?.paymentRequirements?.extensions?.bazaar?.info?.input?.type, "http");
+    assert.equal(capturedPayment?.paymentRequirements?.extensions?.bazaar?.info?.input?.method, "POST");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x4cC773d286E5aA52591E9E6ebed062cC057C441E");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.to, "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.value, "10000");
@@ -630,7 +642,17 @@ test("/v1/resolve-trust in cdp mode uses lean canonical requirements and prefers
     assert.equal(capturedPayment?.payment_header_used, "X-PAYMENT");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.from, "0x9999999999999999999999999999999999999999");
     assert.equal(capturedPayment?.paymentPayload?.payload?.authorization?.nonce, "0x9999999999999999999999999999999999999999999999999999999999999999");
-    assert.deepEqual(capturedPayment?.paymentRequirements, challenge.accepts?.[0]);
+    assert.deepEqual(
+      {
+        ...capturedPayment?.paymentRequirements,
+        extensions: undefined
+      },
+      {
+        ...challenge.accepts?.[0],
+        extensions: undefined
+      }
+    );
+    assert.equal(typeof capturedPayment?.paymentRequirements?.extensions?.bazaar, "object");
   } finally {
     await transport.close();
   }

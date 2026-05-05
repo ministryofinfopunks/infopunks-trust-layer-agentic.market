@@ -769,6 +769,132 @@ test("cdp verifier normalizes paymentRequirements amount from maxAmountRequired"
   assert.equal(postedVerifyBody.paymentRequirements.mimeType, "application/json");
 });
 
+test("cdp verifier propagates bazaar extension metadata into verify payload", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let postedVerifyBody = null;
+  globalThis.fetch = async (_url, init) => {
+    postedVerifyBody = JSON.parse(init?.body ?? "{}");
+    return new Response(
+      JSON.stringify({ isValid: true, verifier_reference: "rcpt_cdp_bazaar_ext" }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const verifier = new X402Verifier({
+    mode: "facilitator",
+    facilitatorProvider: "cdp",
+    verifierUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+    cdpApiKeyId: "test-key-id",
+    cdpApiKeySecret: "test-key-cred",
+    timeoutMs: 2000,
+    logger: null
+  });
+  verifier.authHeaders = async () => ({});
+
+  const bazaar = {
+    info: {
+      input: {
+        type: "http",
+        method: "POST",
+        bodyType: "json",
+        body: {
+          subject_id: "agent_public_paid_proof",
+          context: {
+            action: "execute_task",
+            domain: "agentic_market",
+            capital_at_risk_usd: 1000
+          }
+        }
+      },
+      output: {
+        type: "json",
+        example: {
+          subject_id: "agent_public_paid_proof",
+          trust_score: 40,
+          confidence: 0.8,
+          risk_level: "medium",
+          route: "allow",
+          status: "allow",
+          reasons: ["domain_evidence_sparse"]
+        }
+      }
+    },
+    schema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "object",
+          properties: {
+            type: { type: "string", const: "http" },
+            method: { type: "string", enum: ["POST"] },
+            bodyType: { type: "string", enum: ["json"] },
+            body: { type: "object" }
+          },
+          required: ["type", "method", "bodyType", "body"]
+        }
+      },
+      required: ["input"]
+    }
+  };
+  const paymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "10000",
+      asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+      payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+      maxTimeoutSeconds: 300
+    },
+    payload: {
+      authorization: {
+        from: "0x4cC773d286E5aA52591E9E6ebed062cC057C441E",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      signature: `0x${"b".repeat(130)}`
+    },
+    resource: {
+      url: "https://infopunks.example/v1/resolve-trust",
+      description: "Resolve trust score",
+      mimeType: "application/json"
+    }
+  };
+  const paymentRequirements = {
+    scheme: "exact",
+    network: "eip155:8453",
+    amount: "10000",
+    asset: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    payTo: "0xe4E8908308a86aB43E5dEb6C0fd0F006786104c3",
+    maxTimeoutSeconds: 300,
+    resource: "https://infopunks.example/v1/resolve-trust",
+    extensions: {
+      bazaar
+    }
+  };
+  const result = await verifier.verify({
+    payment: {
+      rail: "x402",
+      paymentPayload,
+      paymentRequirements
+    },
+    requiredUnits: 1,
+    operation: "resolve_trust",
+    fallbackPayer: "payer-1",
+    adapterTraceId: "mcp_trc_cdp_bazaar_ext",
+    entitlement: null
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(typeof postedVerifyBody?.paymentPayload?.extensions?.bazaar, "object");
+  assert.equal(typeof postedVerifyBody?.paymentRequirements?.extensions?.bazaar, "object");
+});
+
 test("cdp verifier normalizes nonce/signature byte arrays to hex strings for verify and settle", async (t) => {
   const originalFetch = globalThis.fetch;
   let postedVerifyBody = null;

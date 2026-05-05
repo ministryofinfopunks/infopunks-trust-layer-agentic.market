@@ -29,7 +29,7 @@ const RESOLVE_TRUST_BAZAAR_INPUT_EXAMPLE = {
 const RESOLVE_TRUST_BAZAAR_OUTPUT_EXAMPLE = {
   subject_id: "agent_public_paid_proof",
   trust_score: 40,
-  confidence: 0.82,
+  confidence: 0.8,
   risk_level: "medium",
   route: "allow",
   status: "allow",
@@ -119,6 +119,23 @@ const RESOLVE_TRUST_BAZAAR_EXTENSION = (() => {
   });
   return resolveBazaarExtensionObject(enriched);
 })();
+const RESOLVE_TRUST_BAZAAR_VALIDATION = validateBazaarExtension(RESOLVE_TRUST_BAZAAR_EXTENSION);
+if (!RESOLVE_TRUST_BAZAAR_VALIDATION.valid) {
+  throw new Error(
+    `Resolve Trust Bazaar extension is invalid: ${(RESOLVE_TRUST_BAZAAR_VALIDATION.errors ?? []).join("; ")}`
+  );
+}
+const RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA_FOR_VALIDATION = RESOLVE_TRUST_BAZAAR_EXTENSION?.schema?.properties?.input ?? null;
+const RESOLVE_TRUST_BAZAAR_INPUT_VALIDATION_ERRORS = validateJsonSchema(
+  RESOLVE_TRUST_BAZAAR_EXTENSION?.info?.input ?? null,
+  RESOLVE_TRUST_BAZAAR_INPUT_SCHEMA_FOR_VALIDATION,
+  "$.info.input"
+);
+if (RESOLVE_TRUST_BAZAAR_INPUT_VALIDATION_ERRORS.length > 0) {
+  throw new Error(
+    `Resolve Trust Bazaar input failed strict validation: ${RESOLVE_TRUST_BAZAAR_INPUT_VALIDATION_ERRORS.join("; ")}`
+  );
+}
 const LATEST_PUBLIC_PROOF_RECEIPT_ID = "xrc_735986e0-fe0c-4214-8e72-add8093958ca";
 const PREVIOUS_PUBLIC_PROOF_RECEIPT_ID = "xrc_20f18f93-b15f-4b26-ae33-bc4e7910b21e";
 const STATIC_PUBLIC_PROOF_RECEIPT_IDS = [
@@ -297,6 +314,22 @@ function routeExtensions(resourcePath) {
   return {};
 }
 
+function cloneJson(value) {
+  if (value == null) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function routeDiscoveryExtensions(resourcePath) {
+  const extensions = routeExtensions(resourcePath);
+  const bazaar = extensions?.bazaar;
+  if (!bazaar || typeof bazaar !== "object") {
+    return {};
+  }
+  return { bazaar: cloneJson(bazaar) };
+}
+
 function routeResourceMetadata(config, toolDef, resourcePath) {
   const url = resourceUrl(config, resourcePath);
   const isResolveTrustRoute = resourcePath === "/v1/resolve-trust";
@@ -408,7 +441,9 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   const units = Number(toolDef?.pricing?.units ?? 0);
   const unitAmountAtomic = BigInt(config.x402PricePerUnitAtomic ?? "10000");
   const challengeAmount = (unitAmountAtomic * BigInt(Math.max(units, 1))).toString();
-  const canonicalRequirement = canonicalPaymentRequirement(config, toolDef, resourcePath, challengeAmount);
+  const canonicalRequirement = canonicalPaymentRequirement(config, toolDef, resourcePath, challengeAmount, {
+    includeDiscoveryExtensions: false
+  });
   const resourceUrlValue = canonicalRequirement.resource;
   return {
     x402Version: 2,
@@ -418,7 +453,13 @@ function paymentRequiredEnvelope(config, toolDef, resourcePath) {
   };
 }
 
-function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountRequired) {
+function canonicalPaymentRequirement(
+  config,
+  toolDef,
+  resourcePath,
+  maxAmountRequired,
+  { includeDiscoveryExtensions = false } = {}
+) {
   const network = normalizeNetworkToCaip2((config.x402SupportedNetworks ?? [])[0] ?? "eip155:84532");
   const tokenMetadata = resolveExactEvmTokenMetadata({
     network,
@@ -457,7 +498,7 @@ function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountReq
 
   const resourceUrlValue = resourceUrl(config, resourcePath);
   const description = routeDescription(resourcePath, toolDef);
-  return {
+  const baseRequirement = {
     scheme: config.x402PaymentScheme ?? "exact",
     network,
     maxAmountRequired: String(maxAmountRequired),
@@ -469,6 +510,12 @@ function canonicalPaymentRequirement(config, toolDef, resourcePath, maxAmountReq
     mimeType: "application/json",
     ...(Object.keys(extra).length > 0 ? { extra } : {})
   };
+  const discoveryExtensions = includeDiscoveryExtensions
+    ? routeDiscoveryExtensions(resourcePath)
+    : {};
+  return Object.keys(discoveryExtensions).length > 0
+    ? { ...baseRequirement, extensions: discoveryExtensions }
+    : baseRequirement;
 }
 
 function challengeHeaders(config, toolDef, resourcePath = "/v1/resolve-trust") {
@@ -1807,7 +1854,16 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         : `req_${randomUUID()}`;
       const toolDef = findTool("resolve_trust");
       const canonicalChallenge = paymentRequiredEnvelope(config, toolDef, endpointPath);
-      const canonicalRequirement = canonicalChallenge?.accepts?.[0] ?? null;
+      const canonicalChallengeRequirement = canonicalChallenge?.accepts?.[0] ?? null;
+      const canonicalVerificationRequirement = canonicalChallengeRequirement
+        ? canonicalPaymentRequirement(
+          config,
+          toolDef,
+          endpointPath,
+          canonicalChallengeRequirement.maxAmountRequired,
+          { includeDiscoveryExtensions: true }
+        )
+        : null;
       const headerSelection = paymentHeaderSelection(req.headers);
       const headerPayment = paymentFromHeaderSelection(headerSelection);
       logger.info({
@@ -1904,23 +1960,24 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
         return;
       }
       const normalized = normalizeTrustScoreRequest(body);
-      if (normalized?.payment && typeof normalized.payment === "object" && canonicalRequirement) {
+      if (normalized?.payment && typeof normalized.payment === "object" && canonicalVerificationRequirement) {
         normalized.payment = {
           ...normalized.payment,
-          paymentRequirements: canonicalRequirement
+          paymentRequirements: canonicalVerificationRequirement
         };
       }
       const challengeVerifyRequirementsDeepEqual = Boolean(
-        normalized?.payment?.paymentRequirements && canonicalRequirement
-        && isDeepStrictEqual(normalized.payment.paymentRequirements, canonicalRequirement)
+        normalized?.payment?.paymentRequirements && canonicalChallengeRequirement
+        && isDeepStrictEqual(normalized.payment.paymentRequirements, canonicalChallengeRequirement)
       );
       logger.info({
         event: "resolve_trust_payment_requirement_alignment",
         request_id: requestId,
-        amount_present: Object.hasOwn(canonicalRequirement ?? {}, "amount"),
-        maxAmountRequired_present: Object.hasOwn(canonicalRequirement ?? {}, "maxAmountRequired"),
-        amount_equals_maxAmountRequired: String(canonicalRequirement?.amount ?? "") === String(canonicalRequirement?.maxAmountRequired ?? ""),
-        challenge_verify_requirements_deep_equal: challengeVerifyRequirementsDeepEqual
+        amount_present: Object.hasOwn(canonicalChallengeRequirement ?? {}, "amount"),
+        maxAmountRequired_present: Object.hasOwn(canonicalChallengeRequirement ?? {}, "maxAmountRequired"),
+        amount_equals_maxAmountRequired: String(canonicalChallengeRequirement?.amount ?? "") === String(canonicalChallengeRequirement?.maxAmountRequired ?? ""),
+        challenge_verify_requirements_deep_equal: challengeVerifyRequirementsDeepEqual,
+        verify_requirements_has_bazaar_extension: Boolean(canonicalVerificationRequirement?.extensions?.bazaar)
       });
       if (!normalized.entity_id) {
         sendJson(
@@ -2048,9 +2105,9 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             entity_id: normalized.entity_id,
             code,
             facilitator_provider: config.x402FacilitatorProvider ?? "openfacilitator",
-            network: canonicalRequirement?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
-            payTo: canonicalRequirement?.payTo ?? config.x402PayTo ?? null,
-            price: canonicalRequirement?.maxAmountRequired ?? canonicalRequirement?.amount ?? config.x402PricePerUnitAtomic ?? null,
+            network: canonicalChallengeRequirement?.network ?? (config.x402SupportedNetworks ?? [])[0] ?? null,
+            payTo: canonicalChallengeRequirement?.payTo ?? config.x402PayTo ?? null,
+            price: canonicalChallengeRequirement?.maxAmountRequired ?? canonicalChallengeRequirement?.amount ?? config.x402PricePerUnitAtomic ?? null,
             payment_header_selected: headerSelection.selectedHeader,
             x_payment_present: headerSelection.xPaymentPresent,
             payment_signature_present: headerSelection.paymentSignaturePresent,
@@ -2060,14 +2117,14 @@ export function createHttpTransport({ config, mcpServer, logger, metrics }) {
             verify_requirement_keys: headerPayment?.payment_header_diagnostics?.verify_requirement_keys ?? [],
             requirement_has_maxAmountRequired: headerPayment?.payment_header_diagnostics?.has_maxAmountRequired ?? false,
             requirement_has_amount: headerPayment?.payment_header_diagnostics?.has_amount ?? false,
-            requirement_amount_equals_maxAmountRequired: String(canonicalRequirement?.amount ?? "") === String(canonicalRequirement?.maxAmountRequired ?? ""),
+            requirement_amount_equals_maxAmountRequired: String(canonicalChallengeRequirement?.amount ?? "") === String(canonicalChallengeRequirement?.maxAmountRequired ?? ""),
             challenge_verify_requirements_deep_equal: challengeVerifyRequirementsDeepEqual,
-            verify_requirements_resource: canonicalRequirement?.resource ?? null,
-            verify_requirements_maxAmountRequired: canonicalRequirement?.maxAmountRequired ?? null,
-            verify_requirements_amount: canonicalRequirement?.amount ?? null,
-            verify_requirements_network: canonicalRequirement?.network ?? null,
-            verify_requirements_asset: canonicalRequirement?.asset ?? null,
-            verify_requirements_payTo: canonicalRequirement?.payTo ?? null,
+            verify_requirements_resource: canonicalChallengeRequirement?.resource ?? null,
+            verify_requirements_maxAmountRequired: canonicalChallengeRequirement?.maxAmountRequired ?? null,
+            verify_requirements_amount: canonicalChallengeRequirement?.amount ?? null,
+            verify_requirements_network: canonicalChallengeRequirement?.network ?? null,
+            verify_requirements_asset: canonicalChallengeRequirement?.asset ?? null,
+            verify_requirements_payTo: canonicalChallengeRequirement?.payTo ?? null,
             facilitator_verify_http_status: errorEnvelope?.error?.details?.status ?? null,
             facilitator_verify_response_body: verifierBody ?? null,
             facilitator_verify_response_body_keys: verifierBody && typeof verifierBody === "object"

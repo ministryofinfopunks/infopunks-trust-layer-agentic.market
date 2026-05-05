@@ -283,6 +283,82 @@ test("canonical payment requirement exactly matches challenge accepts[0]", () =>
   assert.deepEqual(decoded.accepts[0], canonical);
 });
 
+test("resolve-trust canonical payment requirement can include official bazaar discovery extension", () => {
+  const config = {
+    publicUrl: "https://mcp.infopunks.ai",
+    host: "127.0.0.1",
+    port: 4021,
+    x402AcceptedAssets: ["USDC"],
+    x402SupportedNetworks: ["eip155:8453"],
+    x402PaymentScheme: "exact",
+    x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    x402PayTo: "0x1111111111111111111111111111111111111111",
+    x402PricePerUnitAtomic: "10000",
+    x402PaymentTimeoutSeconds: 300,
+    x402Eip712Name: "USD Coin",
+    x402Eip712Version: "2",
+    x402FacilitatorProvider: "cdp"
+  };
+  const toolDef = { pricing: { units: 1 } };
+  const requirement = __testOnly.canonicalPaymentRequirement(
+    config,
+    toolDef,
+    "/v1/resolve-trust",
+    "10000",
+    { includeDiscoveryExtensions: true }
+  );
+  const bazaar = requirement?.extensions?.bazaar;
+  assert.equal(typeof bazaar, "object");
+  assert.equal(bazaar?.info?.input?.type, "http");
+  assert.equal(bazaar?.info?.input?.method, "POST");
+  assert.equal(bazaar?.info?.input?.bodyType, "json");
+  assert.deepEqual(bazaar?.info?.input?.body, {
+    subject_id: "agent_public_paid_proof",
+    context: {
+      action: "execute_task",
+      domain: "agentic_market",
+      capital_at_risk_usd: 1000
+    }
+  });
+  assert.equal(bazaar?.info?.output?.type, "json");
+  assert.equal(bazaar?.info?.output?.example?.subject_id, "agent_public_paid_proof");
+  assert.equal(typeof bazaar?.info?.output?.example?.trust_score, "number");
+  assert.equal(typeof bazaar?.schema?.properties?.input, "object");
+  assert.equal(typeof bazaar?.schema?.properties?.output, "object");
+});
+
+test("resolve-trust bazaar extension input strictly validates against schema.properties.input", () => {
+  const config = {
+    publicUrl: "https://mcp.infopunks.ai",
+    host: "127.0.0.1",
+    port: 4021,
+    x402AcceptedAssets: ["USDC"],
+    x402SupportedNetworks: ["eip155:8453"],
+    x402PaymentScheme: "exact",
+    x402PaymentAssetAddress: "0x833589fCD6eDb6E08f4c7c32D4f71b54bdA02913",
+    x402PayTo: "0x1111111111111111111111111111111111111111",
+    x402PricePerUnitAtomic: "10000",
+    x402PaymentTimeoutSeconds: 300,
+    x402Eip712Name: "USD Coin",
+    x402Eip712Version: "2",
+    x402FacilitatorProvider: "cdp"
+  };
+  const requirement = __testOnly.canonicalPaymentRequirement(
+    config,
+    { pricing: { units: 1 } },
+    "/v1/resolve-trust",
+    "10000",
+    { includeDiscoveryExtensions: true }
+  );
+  const extension = requirement?.extensions?.bazaar;
+  const validation = __testOnly.validateBazaarExtension(extension);
+  assert.equal(validation.valid, true);
+
+  const inputSchema = extension?.schema?.properties?.input;
+  const inputErrors = __testOnly.validateJsonSchema(extension?.info?.input, inputSchema, "$.info.input");
+  assert.deepEqual(inputErrors, []);
+});
+
 test("payment header selection prefers X-PAYMENT over PAYMENT-SIGNATURE", () => {
   const fromAddress = "0x4cC773d286E5aA52591E9E6ebed062cC057C441E";
   const payloadFromXPayment = Buffer.from(JSON.stringify({

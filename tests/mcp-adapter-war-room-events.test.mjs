@@ -375,7 +375,7 @@ test("war room feed includes safe cdp verify error details and accepted comparis
   assert.equal(diagnostics.accepted_payTo_matches_verify_payTo, true);
   assert.equal(diagnostics.accepted_amount_matches_verify_price, true);
   assert.equal(diagnostics.accepted_maxAmountRequired_matches_verify_price, true);
-  assert.deepEqual(diagnostics.cdp_payment_payload_keys.sort(), ["accepted", "payload", "resource", "x402Version"]);
+  assert.deepEqual(diagnostics.cdp_payment_payload_keys.sort(), ["accepted", "extensions", "payload", "resource", "x402Version"]);
   assert.equal(diagnostics.cdp_payment_payload_has_accepted, true);
   assert.equal(diagnostics.cdp_payment_payload_has_payload, true);
   assert.equal(diagnostics.cdp_payment_payload_has_resource, true);

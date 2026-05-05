@@ -210,6 +210,25 @@ function normalizeCdpPaymentPayloadWithRequirements({ paymentPayload, paymentReq
     payload: paymentPayload?.payload,
     resource: normalizeCdpResource({ paymentPayload, paymentRequirements })
   };
+  const payloadExtensions = toObjectOrNull(paymentPayload?.extensions) ?? {};
+  const requirementsExtensions = toObjectOrNull(paymentRequirements?.extensions) ?? {};
+  const resourceExtensions = toObjectOrNull(paymentRequirements?.resource?.extensions) ?? {};
+  const bazaarExtension = toObjectOrNull(
+    payloadExtensions?.bazaar
+    ?? requirementsExtensions?.bazaar
+    ?? resourceExtensions?.bazaar
+  );
+  if (bazaarExtension) {
+    normalizedPaymentPayload = {
+      ...normalizedPaymentPayload,
+      extensions: {
+        ...payloadExtensions,
+        ...requirementsExtensions,
+        ...resourceExtensions,
+        bazaar: bazaarExtension
+      }
+    };
+  }
 
   const payload = normalizedPaymentPayload?.payload;
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -308,6 +327,14 @@ function normalizeCdpPaymentRequirements({ paymentRequirements, paymentPayload }
 
   const normalizedExtra = toObjectOrNull(requirements.extra) ?? toObjectOrNull(accepted.extra);
   assignIfPresent("extra", normalizedExtra);
+  const normalizedExtensions = toObjectOrNull(requirements.extensions)
+    ?? (toObjectOrNull(requirementResourceObject?.extensions)
+      ? { ...requirementResourceObject.extensions }
+      : null)
+    ?? (toObjectOrNull(paymentPayload?.extensions)
+      ? { ...paymentPayload.extensions }
+      : null);
+  assignIfPresent("extensions", normalizedExtensions);
 
   const diagnostics = {
     cdp_payment_requirements_keys: Object.keys(normalized),
